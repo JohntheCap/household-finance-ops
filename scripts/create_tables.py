@@ -58,6 +58,7 @@ def col_dateonly(schema, display):
 def col_money(schema, display):
     return {"@odata.type": "Microsoft.Dynamics.CRM.MoneyAttributeMetadata",
             "SchemaName": schema, "Precision": 2,
+            "MinValue": -1000000000.0, "MaxValue": 1000000000.0,  # negative = outflow (6.2)
             "RequiredLevel": {"Value": "None"}, "DisplayName": label(display)}
 
 

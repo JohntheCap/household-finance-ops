@@ -12,10 +12,14 @@ Non-secret configuration values referenced by RUNBOOK.md placeholders.
 | Environment ID | `1ed355e4-14e3-e58a-aa58-e9410d45c011` | 1.1 |
 | Security group | `Household Finance Members` (John, Amanda) | 1.1 |
 | `<PLAID_CLIENT_ID>` | *(fill in — Plaid dashboard → Developers → Keys; the client_id is not a secret)* | 0.2 |
-| `<CLIENT_ID>` (hf-plaid-sync app registration) | *(fill in at 1.3)* | 1.3 |
-| `suffix` (Bicep param) | *(pick 5 chars at 2.1, e.g. `hf7x2`)* | 2.1 |
-| `<KV>` (Key Vault name) | *(from Bicep output at 2.1)* | 2.1 |
-| `<FUNCTION_APP_NAME>` | *(from Bicep output at 2.1)* | 2.1 |
+| `<CLIENT_ID>` (hf-plaid-sync app registration) | `76d228f9-346d-41b2-b574-4f6136fc52e2` | 1.3 |
+| `suffix` (Bicep param) | `hf7x2` | 2.1 |
+| `<KV>` (Key Vault name) | `kv-hfin-hf7x2` | 2.1 |
+| `<FUNCTION_APP_NAME>` | `func-hfin-hf7x2` | 2.1 |
+| Function managed identity principal | `f69412e9-de34-4a00-b232-42d110d9ad78` | 2.1 |
+| Subscription upgraded to PAYG | 2026-07-07 — Aug 5 trial cliff eliminated | 2.1 |
+| `<PLAID_CLIENT_ID>` (confirmed) | `6a4d1cce93b190000d90e7a2` | 0.2 |
 | Dataverse publisher prefix | `hf` | 1.2 |
+| hf-plaid-sync client secret expiry | **~2027-07-07** — rotate via `az ad app credential reset` + update Key Vault `dataverse-client-secret`, or sync 401s | 1.3 |
 | Plaid plan | Trial (10-Item lifetime cap) — items used: 0/10 | 0.2 |
 | Plaid production per-item price | *(capture from dashboard screenshot)* | 0.2 |

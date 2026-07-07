@@ -61,23 +61,27 @@ class Dataverse:
         })
         self.base = f"{DATAVERSE_URL}/api/data/v9.2"
 
+    @staticmethod
+    def _check(r):
+        """Like raise_for_status, but keeps Dataverse's error body — losing it cost a
+        debugging round-trip on 2026-07-07 (hf_amount range bug). Never again."""
+        if r.status_code >= 400:
+            raise DataverseError(r.status_code, r.request.url, r.text[:500])
+
     def get(self, path):
         r = self.s.get(f"{self.base}/{path}")
-        r.raise_for_status()
+        self._check(r)
         return r.json()
 
     def create(self, table, record):
-        r = self.s.post(f"{self.base}/{table}", data=json.dumps(record))
-        r.raise_for_status()
+        self._check(self.s.post(f"{self.base}/{table}", data=json.dumps(record)))
 
     def upsert(self, table, keycol, keyval, record):
         # Alternate-key upsert: PATCH /table(keycol='keyval')
-        r = self.s.patch(f"{self.base}/{table}({keycol}='{keyval}')", data=json.dumps(record))
-        r.raise_for_status()
+        self._check(self.s.patch(f"{self.base}/{table}({keycol}='{keyval}')", data=json.dumps(record)))
 
     def update(self, table, guid_, record):
-        r = self.s.patch(f"{self.base}/{table}({guid_})", data=json.dumps(record))
-        r.raise_for_status()
+        self._check(self.s.patch(f"{self.base}/{table}({guid_})", data=json.dumps(record)))
 
     def audit(self, action, entity_type, entity_id, context: dict):
         """Append-only audit trail. Never raises into the caller's control flow decisions."""
@@ -110,6 +114,12 @@ class PlaidError(Exception):
     def __init__(self, code, message):
         self.code, self.message = code, message
         super().__init__(f"{code}: {message}")
+
+
+class DataverseError(Exception):
+    def __init__(self, status, url, body):
+        self.code = f"DATAVERSE_{status}"
+        super().__init__(f"HTTP {status} at {url}: {body}")
 
 
 # ---------------------------------------------------------------- sync
@@ -204,7 +214,11 @@ def run_sync(trigger: str) -> dict:
                 logging.exception("could not record item failure state")
 
     run = {"run_id": run_id, "trigger": trigger, "source_env": SOURCE_ENV,
-           "status": run_status, "items": results, "finished_at": _now()}
+           "status": run_status, "items": results,
+           # A4/R13: an empty run must say why. Zero registered items is a config
+           # problem, not a clean sync — this ambiguity cost a round-trip on day 1.
+           "empty_reason": "no_active_items" if not results else None,
+           "finished_at": _now()}
     dv.audit(f"plaid.sync.{run_status}", "SyncRun", run_id, run)
     logging.info("sync run %s: %s", run_id, run_status)
     return run
