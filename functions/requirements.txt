@@ -1,0 +1,4 @@
+azure-functions
+azure-identity>=1.17
+azure-keyvault-secrets>=4.8
+requests>=2.32
