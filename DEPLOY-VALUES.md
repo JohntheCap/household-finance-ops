@@ -21,5 +21,6 @@ Non-secret configuration values referenced by RUNBOOK.md placeholders.
 | `<PLAID_CLIENT_ID>` (confirmed) | `6a4d1cce93b190000d90e7a2` | 0.2 |
 | Dataverse publisher prefix | `hf` | 1.2 |
 | hf-plaid-sync client secret expiry | **~2027-07-07** — rotate via `az ad app credential reset` + update Key Vault `dataverse-client-secret`, or sync 401s | 1.3 |
-| Plaid plan | Trial (10-Item lifetime cap) — items used: 0/10 | 0.2 |
-| Plaid production per-item price | *(capture from dashboard screenshot)* | 0.2 |
+| Plaid plan | Trial (10-Item lifetime cap) — items used: **1/10** (usaa, 2026-07-07) | 0.2 |
+| Plaid production per-item price | Not shown on Trial plan as of 2026-07-07; capture at Pay-as-you-go upgrade | 0.2 |
+| USAA item | 3 accounts: **Classic Checking …0666 (primary — forecast target)**, Classic Checking …0658, Signature Visa …7082 (USAA portal auto-included all; net effect = original CR-2 scope in 1 Item). KV secret `plaid-access-token-usaa` (rotated 2026-07-07 after screenshot exposure). First production sync 2026-07-07: 476 txns | 6.2 |

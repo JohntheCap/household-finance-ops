@@ -13,7 +13,7 @@ Commands are PowerShell. `<angle-bracket>` values are yours to fill. Stop at any
 
 - [ ] Windows machine with: [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), [Azure Functions Core Tools v4](https://learn.microsoft.com/azure/azure-functions/functions-run-local), Python 3.11, git, a GitHub account
 - [ ] M365 household-tenant admin credentials (John)
-- [ ] Amanda available for a 30-min Link session in Phase 6 (per PRD §8.4 both present)
+- [ ] Amanda has read Plaid's data-use disclosure and acknowledged before the first production sync (CR-4 — John executes Link solo; co-presence not required)
 - [ ] Credit card for Azure signup (spend in this sprint: ≈ $0–5/mo) and for Power Apps Premium (~$20/user/mo — verify current price at purchase)
 
 ## Procedure
@@ -147,7 +147,7 @@ az functionapp config appsettings set -g rg-household-finance -n <FUNC> --settin
 Deactivate the sandbox item row (`hf_active = No`). Sandbox rows stay in Dataverse, clearly marked `hf_sourceenv = sandbox` — filter them out of anything downstream; purge is optional at sprint end.
 **Expected:** next run with no active items = `ok` with zero items processed.
 
-### Phase 6 — USAA Link session (John + Amanda, ~30 min, Wave 1 per CR-2)
+### Phase 6 — USAA Link session (John solo per CR-4, ~30 min, Wave 1 per CR-2)
 
 **Item budget reminder:** Trial = 10 Production Items, lifetime, no refunds on removal. This session should consume exactly 2 (USAA = 1 Item covering checking; card issuer = 1 Item). Abort a Link attempt *before* credential submission if anything looks off — abandoned pre-auth attempts don't create Items.
 
@@ -158,12 +158,12 @@ git clone https://github.com/plaid/quickstart; cd quickstart\python
 ```
 Follow the quickstart README to run backend + frontend; open http://localhost:3000.
 
-**6.2** With Amanda present: Link → search **USAA** → authenticate (expect USAA's own OAuth flow; MFA prompts are normal) → select checking. Copy the `access_token` + `item_id` the quickstart prints. Repeat for the credit card institution.
+**6.2** Link → search **USAA** → authenticate (expect USAA's own OAuth flow; MFA prompts are normal) → select checking. Copy the `access_token` + `item_id` the quickstart prints. Repeat for the credit card institution.
 ```powershell
 az keyvault secret set --vault-name <KV> --name plaid-access-token-usaa --value <token1>
 az keyvault secret set --vault-name <KV> --name plaid-access-token-<cardissuer> --value <token2>
 ```
-Add two `hf_plaiditem` rows (labels `usaa-checking`, `<cardissuer>-card`), active Yes. Delete the tokens from the quickstart terminal/scrollback. Read Plaid's data-use disclosure together before authenticating (PRD §3.3 — this was the deal).
+Add two `hf_plaiditem` rows (labels `usaa-checking`, `<cardissuer>-card`), active Yes. Delete the tokens from the quickstart terminal/scrollback. ⛔ **CR-4 gate: do not run the first production sync (6.3) until Amanda has read Plaid's data-use disclosure (PRD §3.3) and acknowledged.**
 
 **6.3** Trigger a manual sync (as 3.3).
 **Expected:** `ok`, `source_env: production`, real transactions in Dataverse. **If USAA fails Link or errors persistently:** that is a *finding, not a blocker* — record the exact `error_code`s, park USAA as manual-entry per Decisions Log §3, and write the verdict (Phase 7). The card item alone can still prove the pipeline.
