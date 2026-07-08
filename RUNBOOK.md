@@ -213,7 +213,7 @@ After 7 consecutive `ok` nights (or a definitive USAA failure): write `USAA-Plai
 
 | Date | Run by | Status | Notes |
 |---|---|---|---|
-| | timer | | night 1 |
+| 2026-07-08 | timer | ok | night 1 — plaid.sync.ok 13:00:05 UTC, usaa-checking added 1/modified 0/removed 0, run_id f2310ac5 |
 | | timer | | night 2 |
 | | timer | | night 3 |
 | | timer | | night 4 |
