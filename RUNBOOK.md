@@ -214,7 +214,7 @@ After 7 consecutive `ok` nights (or a definitive USAA failure): write `USAA-Plai
 | Date | Run by | Status | Notes |
 |---|---|---|---|
 | 2026-07-08 | timer | ok | night 1 — plaid.sync.ok 13:00:05 UTC, usaa-checking added 1/modified 0/removed 0, run_id f2310ac5 |
-| | timer | | night 2 |
+| 2026-07-09 | timer | ok | night 2 — plaid.sync.ok 13:00:11 UTC, usaa-checking added 3/modified 0/removed 0, run_id f91d6ae8 |
 | | timer | | night 3 |
 | | timer | | night 4 |
 | | timer | | night 5 |
