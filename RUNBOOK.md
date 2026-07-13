@@ -215,8 +215,8 @@ After 7 consecutive `ok` nights (or a definitive USAA failure): write `USAA-Plai
 |---|---|---|---|
 | 2026-07-08 | timer | ok | night 1 — plaid.sync.ok 13:00:05 UTC, usaa-checking added 1/modified 0/removed 0, run_id f2310ac5 |
 | 2026-07-09 | timer | ok | night 2 — plaid.sync.ok 13:00:11 UTC, usaa-checking added 3/modified 0/removed 0, run_id f91d6ae8 |
-| | timer | | night 3 |
-| | timer | | night 4 |
-| | timer | | night 5 |
-| | timer | | night 6 |
+| 2026-07-10 | timer | ok | night 3 — plaid.sync.ok 13:00:11 UTC (freshness 13:00:07), usaa-checking added 4/modified 0/removed 0, run_id 0a8b8c5a (back-filled 2026-07-13 from audit log) |
+| 2026-07-11 | timer | ok | night 4 — plaid.sync.ok 13:00:09 UTC (freshness 13:00:05), clean_empty, usaa-checking added 0/modified 0/removed 0, run_id 645edbeb (back-filled 2026-07-13 from audit log) |
+| 2026-07-12 | timer | ok | night 5 — plaid.sync.ok 13:00:09 UTC, usaa-checking added 14/modified 1/removed 0, run_id 0e1b0dd9 (back-filled 2026-07-13 from audit log) |
+| 2026-07-13 | timer | ok | night 6 — plaid.sync.ok 13:00:09 UTC (freshness 13:00:05), clean_empty, usaa-checking added 0/modified 0/removed 0, run_id 4e084162 |
 | | timer | | night 7 |
