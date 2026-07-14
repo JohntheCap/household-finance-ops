@@ -1,7 +1,7 @@
 # Runbook: Sprint 2 — Azure Foundation + Plaid Sync (sandbox → production)
 
 **Owner:** John | **Frequency:** One-time build; Phase 7 checks run nightly for 7 nights
-**Last updated:** 2026-07-07 | **Last run:** —
+**Last updated:** 2026-07-14 | **Last run:** 2026-07-14 (night 7 — soak complete)
 
 ## Purpose
 
@@ -219,4 +219,4 @@ After 7 consecutive `ok` nights (or a definitive USAA failure): write `USAA-Plai
 | 2026-07-11 | timer | ok | night 4 — plaid.sync.ok 13:00:09 UTC (freshness 13:00:05), clean_empty, usaa-checking added 0/modified 0/removed 0, run_id 645edbeb (back-filled 2026-07-13 from audit log) |
 | 2026-07-12 | timer | ok | night 5 — plaid.sync.ok 13:00:09 UTC, usaa-checking added 14/modified 1/removed 0, run_id 0e1b0dd9 (back-filled 2026-07-13 from audit log) |
 | 2026-07-13 | timer | ok | night 6 — plaid.sync.ok 13:00:09 UTC (freshness 13:00:05), clean_empty, usaa-checking added 0/modified 0/removed 0, run_id 4e084162 |
-| | timer | | night 7 |
+| 2026-07-14 | timer | ok | night 7 — plaid.sync.ok 13:00:09 UTC (freshness 13:00:05), usaa-checking added 15/modified 0/removed 0, run_id bc5c9f86. **Soak complete: 7 consecutive ok nights.** |
