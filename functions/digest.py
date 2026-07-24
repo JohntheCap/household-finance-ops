@@ -17,6 +17,11 @@ import re
 
 P = "hf"
 
+try:                                    # budget review (Sprint 5) is optional
+    import budget as _budget
+except Exception:                       # noqa: BLE001
+    _budget = None
+
 # ---- Human-verified config (NOT recomputed from the registry) -------------
 # Minimum nut and income come from John's monthly-nut analysis; variable-category
 # amounts in hf_bill are per-transaction medians and would badly understate the
@@ -58,6 +63,9 @@ def assemble(get, today, recipient_to, recipient_cc, now=None):
                     f"{P}_variancepct,{P}_notes,{P}_freshnessts")
     accounts = get(f"{P}_accounts?$select={P}_name,{P}_freshnessts,{P}_sourceenv")
     items = get(f"{P}_plaiditems?$select={P}_label,{P}_active,{P}_lastsyncstatus,{P}_lastsyncts")
+    txns = (get(f"{P}_transactions?$select={P}_posteddate,{P}_amount,{P}_merchantraw,"
+                f"{P}_categorydetailed,{P}_istransfer,{P}_isremoved,{P}_sourceenv")
+            if _budget else [])
 
     # Freshness / health gate (R13): any active item not 'ok', or any production
     # account staler than STALE_HOURS, blocks the green "all clear" state.
@@ -118,6 +126,9 @@ def assemble(get, today, recipient_to, recipient_cc, now=None):
     income_total = sum(a for _, a in INCOME_ACTIVE)
     gap = income_total - MINIMUM_NUT
 
+    budget_payload = (_budget.compute(txns, today) if _budget
+                      else {"shown": False, "empty_reason": "budget_module_missing"})
+
     return {
         "generated_at": now.isoformat(),
         "asof": today.isoformat(),
@@ -137,6 +148,7 @@ def assemble(get, today, recipient_to, recipient_cc, now=None):
                 "income_lines": INCOME_ACTIVE, "covered": gap >= 0,
                 "meta": {"freshness_ts": fresh_ts, "confidence": "config",
                          "source_env": "monthly-nut-v2", "empty_reason": None}},
+        "budget": budget_payload,
     }
 
 
@@ -211,6 +223,15 @@ body{margin:0;background:#eceff3;font-family:-apple-system,"Segoe UI",Roboto,Hel
 .footer{background:#0E1A35;background:linear-gradient(160deg,#16294d,#0a1530);color:#93a6c6;padding:14px 18px 16px;font-size:11.5px;text-align:center;border-top:4px solid #C8A24B}
 .footer .ok{color:#7fd3a3;font-weight:700}
 .footer .bad{color:#f0c869;font-weight:700}
+.budget-note{font-size:12px;color:#8a93a1;margin:-2px 0 12px}
+.cat{margin-bottom:13px}
+.cat-top{display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:5px}
+.cat-name{font-weight:700}
+.cat-amt{font-weight:700;white-space:nowrap}
+.cat-of{color:#8a93a1;font-weight:500;font-size:12.5px}
+.over{color:#c0392b}
+.bar{width:100%;border-collapse:collapse;border-radius:6px;overflow:hidden}
+.bar td{height:11px;line-height:11px;font-size:1px}
 """
 
 _PREVIEW_CSS = """
@@ -292,6 +313,7 @@ def _card(payload):
     footer_status = ('<span class="ok">bank data fresh &mdash; nothing overdue, confirmed &#10003;</span>'
                      if not stale else
                      '<span class="bad">bank data stale &mdash; not confirmed this week</span>')
+    budget_html = _budget.render_section(p["budget"]) if _budget and p.get("budget") else ""
 
     return f"""<div class="card">
 <div class="crest-band">{crest_img}
@@ -317,6 +339,7 @@ def _card(payload):
 {f'<div class="sectotal"><span>{len(upcoming["items"])} bills</span><span>{_money(upcoming["total"])}</span></div>' if upcoming['items'] else ''}
 </div>
 <div class="sec"><h3>Needs attention</h3>{att_html}</div>
+{budget_html}
 </div>
 <div class="footer">Generated {_fmt_gen(gen)} &middot; {footer_status}</div>
 </div>"""
