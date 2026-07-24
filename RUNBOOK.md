@@ -260,11 +260,71 @@ neither should appear as MISSED; if they do, the seed overrides didn't load.)
 | `unobservable` | Card-side cycle with no Apple Card statement imported yet — **absent data, not a missed payment** |
 | `superseded` | Instance the matcher no longer generates — bill was cancelled, or its cadence changed. Retired, not deleted (append-only spirit) |
 
+## Sprint 4 - weekly digest (John-only until go-live)
+
+The digest assembles + renders in `functions/digest.py` (shared with the local
+preview `scripts/build_digest.py`, so the two never drift). `function_app.py` adds a
+Sunday timer (`weekly_digest`), a manual HTTP trigger (`manual_digest`), and Graph
+send. **Nothing reaches an inbox until all the gates below are set** - by default the
+timer builds and audits the digest but sends nothing.
+
+### Local preview (no Azure, no send)
+```
+cd scripts && python build_digest.py https://org29b77f3e.crm.dynamics.com --out digest_preview.html
+```
+Open the HTML. `--asof YYYY-MM-DD` renders any week. This is the fastest iteration loop
+and touches nothing in production.
+
+### Nut / income figures
+Human-verified constants at the top of `functions/digest.py` (`MINIMUM_NUT`,
+`INCOME_ACTIVE`), NOT recomputed from the registry (variable-category amounts there
+understate the nut). Update them when the monthly-nut analysis or the UI benefit
+firms up, then redeploy. The Oregon UI figure is a placeholder.
+
+### DEPLOY ORDERING - read before publishing
+The `weekly_digest` timer binds to `%DIGEST_SCHEDULE%`. If that app setting is
+missing, the Function App fails to load **and takes the nightly sync down with it.**
+So set the app settings FIRST, then deploy:
+
+```
+az functionapp config appsettings set -g rg-household-finance -n func-hfin-hf7x2 --settings \
+  DIGEST_SCHEDULE="0 0 14 * * 0" \   # Sunday 7am Pacific (PDT=14:00 UTC; PST=15:00). See tz note.
+  DIGEST_TO="john@johnthecap.com" \
+  DIGEST_SEND="false"                # stays false until go-live
+```
+Timezone: Function timers are UTC unless `WEBSITE_TIME_ZONE` is set. `0 0 14 * * 0`
+is 7am PDT; it drifts to 6am in PST. Set `WEBSITE_TIME_ZONE="America/Los_Angeles"`
+and use `0 0 7 * * 0` to pin 7am year-round.
+
+### Graph send setup (once, John - required before any real send)
+1. App registration (same one used for Dataverse) -> API permissions -> add
+   **Microsoft Graph -> Application -> Mail.Send** -> **Grant admin consent**.
+2. Choose a sender mailbox and set `DIGEST_FROM="<mailbox>"` (app setting). For
+   least privilege, scope Mail.Send to just that mailbox via an ApplicationAccessPolicy.
+3. Entering credentials / granting consent is John's to do in the portal - not automatable here.
+
+### Verify, then go live
+1. Deploy. The timer now runs Sundays in **dry run** (builds + audits, `DIGEST_SEND=false`).
+2. Preview the production build without sending: `GET /api/digest` returns the rendered HTML.
+3. First real send, John only: `GET /api/digest?send=true` (needs Graph set up).
+4. **Go-live (explicit, John-approved):** set `DIGEST_SEND="true"` and, only when ready
+   to include Amanda, `DIGEST_CC="amanda@..."`. Until `DIGEST_CC` is set, no digest can
+   reach Amanda - by design (signed-off decision 2026-07-24).
+
+### Digest delivery states (in the audit log)
+| Audit action | Meaning |
+|---|---|
+| `digest.render` | Built, not sent (dry run or `/api/digest` preview) |
+| `digest.sent` | Delivered via Graph |
+| `digest.send_failed` | Build succeeded, Graph send failed - recorded, never silent |
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Function startup error `PLAID_ENV must be...` | App setting missing/typo'd | `az functionapp config appsettings set ... PLAID_ENV=sandbox` |
+| Whole app dead after a digest deploy | `DIGEST_SCHEDULE` app setting missing; `%DIGEST_SCHEDULE%` won't resolve | Set `DIGEST_SCHEDULE` (see digest deploy ordering), restart |
+| `digest.send_failed` in audit | Graph Mail.Send not consented, or `DIGEST_FROM` unset/not permitted | Complete Graph setup; check the error string in the audit row |
 | Wave of `missed` right after seeding | Bills seeded with a due day but the transaction window predates them | Check `hf_anchordate`; cycles before the anchor are skipped by design |
 | A card bill reads `missed`, not `unobservable` | A statement covering that month was imported but lacks the charge | Genuine miss — or the merchant descriptor changed; add an alias to `hf_matchpattern` (`\|`-separated) |
 | Same bill matched twice in a month | Two bills share a merchant descriptor | Set `hf_matchmode=merchant+amount` so amount disambiguates |

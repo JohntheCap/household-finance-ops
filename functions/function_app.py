@@ -20,6 +20,8 @@ import requests
 from azure.identity import DefaultAzureCredential, ClientSecretCredential
 from azure.keyvault.secrets import SecretClient
 
+import digest  # shared assemble+render, also used by scripts/build_digest.py
+
 app = func.FunctionApp()
 
 # ---------------------------------------------------------------- config
@@ -502,11 +504,107 @@ def run_sync(trigger: str) -> dict:
     return run
 
 
+# ---------------------------------------------------------------- weekly digest
+
+def _digest_recipients():
+    """John only by default. Amanda's CC is added ONLY via the DIGEST_CC app
+    setting at go-live -- never hardcoded, so no test digest can reach her
+    (signed-off decision, 2026-07-24). Empty/unset DIGEST_CC => no CC."""
+    to = os.environ.get("DIGEST_TO", "john@johnthecap.com")
+    cc_raw = os.environ.get("DIGEST_CC", "").strip()
+    cc = [a.strip() for a in cc_raw.split(",") if a.strip()]
+    return to, cc
+
+
+def _graph_send(to, cc, subject, html):
+    """Send the digest via Microsoft Graph (app-only Mail.Send).
+
+    Requires setup John does once (see RUNBOOK 'Weekly digest'):
+      - the app registration granted Mail.Send *application* permission + admin consent,
+      - DIGEST_FROM set to a mailbox the app may send as.
+    Uses the same client-secret identity as Dataverse. Never raises into the run's
+    control flow decisions -- the caller records the outcome.
+    """
+    tenant = _secrets.get_secret("dataverse-tenant-id").value
+    client = _secrets.get_secret("dataverse-client-id").value
+    secret = _secrets.get_secret("dataverse-client-secret").value
+    cred = ClientSecretCredential(tenant, client, secret)
+    token = cred.get_token("https://graph.microsoft.com/.default").token
+    sender = os.environ["DIGEST_FROM"]
+    msg = {
+        "message": {
+            "subject": subject,
+            "body": {"contentType": "HTML", "content": html},
+            "toRecipients": [{"emailAddress": {"address": to}}],
+            "ccRecipients": [{"emailAddress": {"address": a}} for a in cc],
+        },
+        "saveToSentItems": True,
+    }
+    r = requests.post(f"https://graph.microsoft.com/v1.0/users/{sender}/sendMail",
+                      headers={"Authorization": f"Bearer {token}",
+                               "Content-Type": "application/json"},
+                      data=json.dumps(msg), timeout=30)
+    if r.status_code not in (200, 202):
+        raise RuntimeError(f"graph sendMail HTTP {r.status_code}: {r.text[:400]}")
+
+
+def run_digest(dv: Dataverse, trigger: str, send: bool) -> dict:
+    """Assemble + render the weekly digest, optionally send it.
+
+    Delivery is gated three ways so nothing reaches an inbox unintentionally:
+      - `send` must be True (timer passes DIGEST_SEND; manual defaults to False),
+      - DIGEST_FROM must be configured (Graph sender),
+      - Amanda is only ever CC'd if DIGEST_CC is explicitly set.
+    Read-only against Dataverse; sends no money anywhere, ever. Every run audited.
+    """
+    run_id = str(uuid.uuid4())[:8]
+    to, cc = _digest_recipients()
+    today = datetime.now(timezone.utc).date()
+    payload = digest.assemble(lambda path: dv.get(path)["value"], today, to, cc)
+    html = digest.render(payload)
+    subject = digest.subject(payload)
+
+    n = payload
+    summary = {
+        "run_id": run_id, "trigger": trigger, "asof": n["asof"], "stale": n["stale"],
+        "to": to, "cc": cc, "source_env": SOURCE_ENV,
+        "paid": len(n["paid"]["items"]), "upcoming": len(n["upcoming"]["items"]),
+        "missed": len(n["attention"]["missed"]),
+        "pending_statement": len(n["attention"]["pending_statement"]),
+        "nut_gap": n["nut"]["gap"],
+        "empty_reason": "clean_empty" if not n["paid"]["items"] and not n["upcoming"]["items"] else None,
+    }
+
+    if not send:
+        summary["delivery"] = "render_only"
+        dv.audit("digest.render", "Digest", run_id, summary)
+        return {**summary, "html": html}
+
+    try:
+        _graph_send(to, cc, subject, html)
+        summary["delivery"] = "sent"
+        dv.audit("digest.sent", "Digest", run_id, summary)
+    except Exception as e:  # noqa: BLE001 — a send failure is recorded, never silent
+        summary["delivery"] = "send_failed"
+        summary["error"] = str(e)[:300]
+        logging.exception("digest send failed")
+        dv.audit("digest.send_failed", "Digest", run_id, summary)
+    return summary
+
+
 # ---------------------------------------------------------------- triggers
 
 @app.timer_trigger(schedule="%TIMER_SCHEDULE%", arg_name="timer", run_on_startup=False)
 def nightly_sync(timer: func.TimerRequest) -> None:
     run_sync("timer")
+
+
+@app.timer_trigger(schedule="%DIGEST_SCHEDULE%", arg_name="timer", run_on_startup=False)
+def weekly_digest(timer: func.TimerRequest) -> None:
+    # Sends only if DIGEST_SEND=true. Until John flips it, the timer builds and
+    # audits the digest but delivers nothing -- a safe dry run on the real schedule.
+    send = os.environ.get("DIGEST_SEND", "false").lower() == "true"
+    run_digest(Dataverse(), "timer", send)
 
 
 @app.route(route="sync", auth_level=func.AuthLevel.FUNCTION)
@@ -520,4 +618,20 @@ def manual_sync(req: func.HttpRequest) -> func.HttpResponse:
 def manual_match(req: func.HttpRequest) -> func.HttpResponse:
     """Re-run matching without a sync — for after an Apple Card CSV import."""
     run = match_bills(Dataverse(), "manual")
+    return func.HttpResponse(json.dumps(run, indent=2), mimetype="application/json")
+
+
+@app.route(route="digest", auth_level=func.AuthLevel.FUNCTION)
+def manual_digest(req: func.HttpRequest) -> func.HttpResponse:
+    """Build the weekly digest on demand.
+
+    Default renders and RETURNS the HTML without sending (safe preview from the
+    production build). ?send=true actually emails it (John only, unless DIGEST_CC
+    is set) -- use once Graph Mail.Send is configured and John has approved.
+    """
+    send = (req.params.get("send", "false").lower() == "true")
+    run = run_digest(Dataverse(), "manual", send)
+    if not send:
+        # Return the rendered email so John can eyeball the production output.
+        return func.HttpResponse(run["html"], mimetype="text/html")
     return func.HttpResponse(json.dumps(run, indent=2), mimetype="application/json")

@@ -8,3 +8,6 @@ local.settings.json
 # Keep the reviewed copy beside the workbook in the OneDrive Claude folder.
 scripts/bill_seed_review.csv
 
+
+# generated digest preview (contains rendered financial data)
+scripts/digest_preview.html

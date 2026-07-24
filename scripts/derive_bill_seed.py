@@ -76,6 +76,16 @@ CADENCE_HINTS = [
 FREQUENCY_OVERRIDES = {"Dollar Shave Club": "quarterly"}
 STATUS_OVERRIDES = {"CrunchLabs": "cancelled"}
 
+# NOTED, NOT YET APPLIED (John, 2026-07-24): John moved LMNT's payment method from
+# the Apple Card to USAA checking to streamline recurring expenses. When applied,
+# "LMNT electrolytes (card)" becomes payment_account=checking (latency 35 -> 3), and
+# its match_pattern (currently the Apple Card descriptor "Drink Lmnt Inc.") must be
+# re-derived from the FIRST checking charge -- the Plaid checking descriptor will
+# differ. Until that charge posts, hold match_mode=review so it can't false-MISS.
+# Deferred per John: press forward with the current plan first.
+# ACCOUNT_OVERRIDES = {"LMNT electrolytes (card)": "checking"}
+# MATCHMODE_OVERRIDES = {"LMNT electrolytes (card)": "review"}  # until checking descriptor known
+
 # Share of a bill's own transactions the pattern must catch before we trust it to
 # find every cycle. Below this the pattern is precise but leaky -- some cycles
 # would go unmatched and surface as false MISSED.

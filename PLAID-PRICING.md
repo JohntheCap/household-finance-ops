@@ -28,7 +28,26 @@ syncing 1 Item costs the same as syncing it hourly. Two consequences:
 2. **Apple Card via CSV consumes no Item** — it stays free by construction, which
    is worth preserving now that the household budget is tight.
 
-## To finish closing this (needs John — requires login)
+## Usage confirmed 2026-07-24 (from John's dashboard export)
+
+`usage-transactions-cumulative-usage.csv` (Transactions Items, cumulative):
+**0 Items billed through 2026-07-06, then exactly 1 Item every day from 2026-07-07
+to 2026-07-23** — flat at 1. This confirms:
+
+- **Exposure is exactly one Item** (the USAA production Item, live since 2026-07-07).
+  The abandoned-Item risk is disproven — no stray Items are accruing fees.
+- **Apple Card via CSV consumes no Item**, as designed.
+
+What the export still does NOT give is the **dollar rate per Item** (it is a
+quantity page, not a billing page). For budget purposes the material question —
+"is infra cost small?" — is answered: 1 PAYG Transactions Item, nothing else.
+John's read on 2026-07-24: "not showing much usage," i.e. satisfied it is minimal.
+
+**Item (e) status:** effectively closed for the budget purpose (quantity bounded,
+cost minimal). The exact per-Item dollar figure remains uncaptured; record it from
+the billing page if/when a precise number is ever needed.
+
+## If a precise dollar figure is ever needed (needs John — requires login)
 
 Two Dashboard pages, both behind authentication:
 
