@@ -181,11 +181,95 @@ After 7 consecutive `ok` nights (or a definitive USAA failure): write `USAA-Plai
 - [ ] USAA compatibility verdict documented (pass **or** parked-as-manual-entry)
 - [ ] IaC + function code pushed to the private repo; Plaid production pricing captured in Decisions Log §4
 
+## Sprint 3R — bill registry, Apple Card, category detail
+
+Run order matters: the schema must exist before the seed, and the seed before
+matching has anything to match against.
+
+### One-time setup
+
+1. **Schema.** `python scripts/create_tables.py https://org29b77f3e.crm.dynamics.com`
+   Idempotent — no-ops on the four Sprint 2 tables, creates `hf_bill`,
+   `hf_billinstance`, and the new `hf_categorydetailed` / `hf_istransfer` columns.
+   Check key activation with `python scripts/check_keys.py <env>` — it prints
+   `READY to seed` once both new alternate keys are Active (usually a few minutes,
+   allow up to ~15). Seeding before they activate fails with "key not found".
+
+   **Then grant the app user access to the new tables:**
+   `python scripts/grant_bill_privileges.py <env>`
+   The `HF Sync Writer` role (RUNBOOK 1.3) is least-privilege and scoped to named
+   tables, so a newly-created table is invisible to the function until its
+   privileges are added — the matcher's first write returns `DATAVERSE_403`
+   otherwise. This grants org-level Create/Read/Write (no delete), matching the
+   original four tables. Any future hf_ table the function writes needs the same
+   step. Propagates in ~1–2 min.
+2. **Derive the seed.** `cd scripts && python derive_bill_seed.py "../../Household-Monthly-Nut-v2.xlsx" bill_seed_review.csv`
+   Reads the Register plus the raw transaction sheets; proposes payment account,
+   due day, cadence anchor and merchant patterns. **Review the CSV** — this is the
+   human-verification step, and everything downstream trusts it.
+3. **Validate, then load.**
+   `python seed_bills.py <env> bill_seed_review.csv --dry-run` then without the flag.
+   Validation refuses to write a CSV that would poison matching (a bill set to
+   match with no pattern, no due day or no anchor).
+4. **Deploy the function.** `func azure functionapp publish func-hfin-hf7x2`
+   Must happen BEFORE step 5: the deployed build is what writes
+   `hf_categorydetailed` and `hf_istransfer`, and replaying history against the
+   old build would spend the replay and populate nothing.
+5. **Backfill the detailed category** over existing history:
+   `python reset_cursor.py <env> --list` then `--label <item>`, then trigger one
+   sync. The pre-reset cursor is written to the audit log first, so the change is
+   reversible from the trail alone.
+
+Verify after step 5: transactions should carry `hf_categorydetailed`, and the run
+JSON should contain a `bill_match` block with a `by_status` breakdown.
+
+### Monthly — Apple Card statement
+
+Wallet → Apple Card → statement → Export Transactions → CSV, then:
+
+```
+python scripts/ingest_applecard.py <env> "<statement>.csv" --dry-run
+python scripts/ingest_applecard.py <env> "<statement>.csv"
+```
+
+Dry-run first, always — it prints row count, coverage window, transfer count and
+the number of same-day/merchant/amount repeats disambiguated by ordinal. Re-running
+is safe (alternate-key upserts). Afterwards, hit the `match` endpoint so card-side
+bills re-evaluate against the newly-visible statement.
+
+### Before deploying a matcher change
+
+`cd scripts && python test_match_bills.py bill_seed_review.csv "../../Household-Monthly-Nut-v2.xlsx"`
+
+Runs the shipped matching logic offline against real observed history. **Verify
+every MISSED it prints.** As of 2026-07-24 the expected result is a 97% match rate
+on due cycles with 2 MISSED — LMNT May and Fabletics June. Both are genuine (LMNT
+is card-side and shows `unobservable` in production where no statement is loaded;
+Fabletics lapsed). A new MISSED that is not one of those two is a regression until
+proven otherwise. (Dollar Shave Club is quarterly and CrunchLabs is cancelled —
+neither should appear as MISSED; if they do, the seed overrides didn't load.)
+
+### Bill instance states
+
+| State | Meaning |
+|---|---|
+| `upcoming` | Not yet due, or due but still inside the bill's match latency |
+| `arrived` | Matched a transaction, amount within tolerance |
+| `drifted` | Matched, amount outside `hf_variancetolerancepct` — investigate, not an error |
+| `missed` | Past due + latency, observable, and nothing matched |
+| `unobservable` | Card-side cycle with no Apple Card statement imported yet — **absent data, not a missed payment** |
+| `superseded` | Instance the matcher no longer generates — bill was cancelled, or its cadence changed. Retired, not deleted (append-only spirit) |
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Function startup error `PLAID_ENV must be...` | App setting missing/typo'd | `az functionapp config appsettings set ... PLAID_ENV=sandbox` |
+| Wave of `missed` right after seeding | Bills seeded with a due day but the transaction window predates them | Check `hf_anchordate`; cycles before the anchor are skipped by design |
+| A card bill reads `missed`, not `unobservable` | A statement covering that month was imported but lacks the charge | Genuine miss — or the merchant descriptor changed; add an alias to `hf_matchpattern` (`\|`-separated) |
+| Same bill matched twice in a month | Two bills share a merchant descriptor | Set `hf_matchmode=merchant+amount` so amount disambiguates |
+| `bill_match.status = skipped` in the run log | The sync failed, so matching was deliberately not run on stale data | Fix the sync; matching resumes next run |
+| `bill_match` = `match_failed` / `DATAVERSE_403` | App user's role lacks the new tables (least-privilege role is table-scoped) | `python scripts/grant_bill_privileges.py <env>`, wait ~2 min, re-run `/api/match` |
 | 401/403 from Dataverse | App user missing role, or wrong `DATAVERSE_URL` | Re-check Phase 1.3 role assignment; URL must be the org URL, no trailing path |
 | `INVALID_API_KEYS` from Plaid | Sandbox secret used against production or vice versa | Key Vault secret name must match `plaid-secret-<PLAID_ENV>` |
 | Upsert 400 "key not found" | Alternate keys not activated | Phase 1.2 Keys step; wait for Active |

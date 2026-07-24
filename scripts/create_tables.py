@@ -1,7 +1,12 @@
-"""Create the Sprint 2 Dataverse schema: 4 tables, all columns, 2 alternate keys.
+"""Create the Dataverse schema: 6 tables, all columns, 4 alternate keys.
+
+Sprint 2 (live since 2026-07-07): hf_account, hf_transaction, hf_plaiditem, hf_auditlog.
+Sprint 3R adds: hf_bill + hf_billinstance (PRD 6.2 Tables 6 and 7), and
+hf_categorydetailed on hf_transaction.
 
 Auth: borrows your Azure CLI login (az login) — no credentials in this script.
-Idempotent: skips tables/columns/keys that already exist; safe to re-run.
+Idempotent: skips tables/columns/keys that already exist; safe to re-run. Re-running
+after Sprint 2 creates only the new objects and no-ops on everything else.
 
 Usage:
   pip install requests
@@ -62,6 +67,20 @@ def col_money(schema, display):
             "RequiredLevel": {"Value": "None"}, "DisplayName": label(display)}
 
 
+def col_int(schema, display, lo=0, hi=1000):
+    return {"@odata.type": "Microsoft.Dynamics.CRM.IntegerAttributeMetadata",
+            "SchemaName": schema, "MinValue": lo, "MaxValue": hi,
+            "RequiredLevel": {"Value": "None"}, "DisplayName": label(display)}
+
+
+def col_decimal(schema, display, lo=-100000.0, hi=100000.0):
+    # Explicit Min/Max on every numeric column: the 2026-07-07 hf_amount range bug
+    # was a default-bounds surprise. Never rely on the default again.
+    return {"@odata.type": "Microsoft.Dynamics.CRM.DecimalAttributeMetadata",
+            "SchemaName": schema, "Precision": 2, "MinValue": lo, "MaxValue": hi,
+            "RequiredLevel": {"Value": "None"}, "DisplayName": label(display)}
+
+
 # ---- schema definition (primary-name column doubles as a real data column) ----
 
 TABLES = [
@@ -83,6 +102,13 @@ TABLES = [
          col_dateonly("hf_posteddate", "Posted Date"),
          col_money("hf_amount", "Amount"),
          col_text("hf_category", "Category", 60),
+         # Sprint 3R item c: primary alone collapses groceries and restaurants
+         # into FOOD_AND_DRINK. detailed is what makes categories trustworthy.
+         col_text("hf_categorydetailed", "Category (Detailed)", 100),
+         # Sprint 3R item d: card payments are transfers between our own accounts,
+         # not spending. Set on APPLECARD GSBANK PAYMENT rows so the payment and
+         # the purchases behind it are never both counted as outflow.
+         col_bool("hf_istransfer", "Is Transfer"),
          col_bool("hf_ispending", "Is Pending"),
          col_bool("hf_isremoved", "Is Removed"),
          col_text("hf_plaidaccountid_text", "Plaid Account ID (Text)", 100),
@@ -101,6 +127,69 @@ TABLES = [
          col_text("hf_lastsyncts", "Last Sync Timestamp", 40),
      ],
      "key": None},
+
+    # ---- Sprint 3R: the bill registry (PRD 6.2 Table 6) ----
+    # hf_kind separates real obligations from spend rollups. Both live here so the
+    # monthly nut stays queryable in one place, but only kind='bill' is ever
+    # matched -- a category has no due date, so it could only produce false MISSED.
+    {"schema": "hf_bill", "display": "Bill", "plural": "Bills",
+     "primary": col_text("hf_name", "Bill Name", 120, primary=True),
+     "columns": [
+         col_text("hf_billkey", "Bill Key", 100),
+         col_text("hf_kind", "Kind", 20),                    # bill | category | excluded
+         col_text("hf_tier", "Tier", 10),                    # 1 | 2 | 3 | One-off
+         col_text("hf_status", "Status", 20),                # active | paused | cancelled
+         col_text("hf_amounttype", "Amount Type", 20),       # fixed | variable
+         # Two distinct amounts. expectedamount is the per-cycle charge and drives
+         # matching; monthlyequivalent is the amortised figure the monthly nut uses.
+         # Garbage is 94.72 per cycle but 47.36 a month, and using the latter to
+         # match reads every garbage cycle as +100% drift.
+         col_money("hf_expectedamount", "Expected Amount"),
+         col_money("hf_monthlyequivalent", "Monthly Equivalent"),
+         col_text("hf_frequency", "Frequency", 20),          # monthly | bimonthly | quarterly | annual
+         col_int("hf_dueday", "Due Day of Month", 1, 31),
+         col_dateonly("hf_anchordate", "Cadence Anchor Date"),
+         col_text("hf_paymentaccount", "Payment Account", 20),  # checking | applecard | mixed
+         # Missed-detection grace. Apple Card spend only arrives with the monthly
+         # statement CSV, so a card bill is not late at due+3 the way a checking
+         # bill is -- it is simply not observable yet. Without this the first
+         # nightly run would fire ~14 false MISSED into Amanda's digest.
+         col_int("hf_latencydays", "Match Latency Days", 0, 400),
+         col_text("hf_matchmode", "Match Mode", 20),  # merchant | merchant+amount | review | none
+         col_text("hf_matchpattern", "Match Pattern", 200),
+         col_int("hf_variancetolerancepct", "Variance Tolerance Pct", 0, 100),
+         col_dateonly("hf_startdate", "Start Date"),
+         col_dateonly("hf_enddate", "End Date"),
+         col_memo("hf_notes", "Notes"),
+         col_text("hf_freshnessts", "Freshness Timestamp", 40),
+         col_text("hf_sourceenv", "Source Environment", 20),
+     ],
+     "key": ("hf_bill_billkey_key", "Bill Key", ["hf_billkey"])},
+
+    # Per-cycle state (PRD 6.2 Table 7). Status lives here, not on hf_bill, so a
+    # MISSED month stays on the record after the next cycle opens and can be
+    # acknowledged rather than overwritten.
+    {"schema": "hf_billinstance", "display": "Bill Instance", "plural": "Bill Instances",
+     "primary": col_text("hf_name", "Instance Name", 200, primary=True),
+     "columns": [
+         col_text("hf_instancekey", "Instance Key", 100),  # <billkey>|YYYY-MM
+         col_text("hf_billkey", "Bill Key", 100),          # parent, by alternate key
+         col_dateonly("hf_duedate", "Due Date"),
+         col_money("hf_expectedamount", "Expected Amount"),
+         col_money("hf_actualamount", "Actual Amount"),
+         # upcoming | arrived | missed | drifted | skipped | unobservable
+         col_text("hf_status", "Status", 20),
+         col_text("hf_matchedtxnid", "Matched Transaction ID", 100),
+         col_dateonly("hf_paiddate", "Paid Date"),
+         col_decimal("hf_variancepct", "Variance Pct", -10000.0, 10000.0),
+         # Tool contract (A4): confidence and source_env travel with the value.
+         col_decimal("hf_matchconfidence", "Match Confidence", 0.0, 1.0),
+         col_text("hf_emptyreason", "Empty Reason", 40),
+         col_memo("hf_notes", "Match Notes"),
+         col_text("hf_freshnessts", "Freshness Timestamp", 40),
+         col_text("hf_sourceenv", "Source Environment", 20),
+     ],
+     "key": ("hf_billinstance_instancekey_key", "Instance Key", ["hf_instancekey"])},
 
     {"schema": "hf_auditlog", "display": "Audit Log", "plural": "Audit Logs",
      "primary": col_text("hf_action", "Action", 80, primary=True),
@@ -174,4 +263,5 @@ for t in TABLES:
             }, f"alternate key {kschema}")
 
 print("\nDone. Verify in make.powerapps.com -> Solutions -> HouseholdFinance:")
-print("4 tables; keys on Account + Transaction should reach status Active within ~15 min.")
+print("6 tables; keys on Account, Transaction, Bill, BillInstance reach Active in ~15 min.")
+print("Alternate keys must be Active BEFORE seed_bills.py runs -- upserts need them.")
