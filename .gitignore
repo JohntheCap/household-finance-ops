@@ -1,3 +1,10 @@
 __pycache__/
 local.settings.json
 .python_packages/
+
+# The reviewed bill seed is the household register in full — every obligation,
+# amount and biller descriptor. It is regenerable from Household-Monthly-Nut-v2.xlsx
+# via scripts/derive_bill_seed.py, so it stays out of git history by default.
+# Keep the reviewed copy beside the workbook in the OneDrive Claude folder.
+scripts/bill_seed_review.csv
+
