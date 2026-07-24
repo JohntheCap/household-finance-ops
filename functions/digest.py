@@ -189,15 +189,12 @@ body{margin:0;background:#eceff3;font-family:-apple-system,"Segoe UI",Roboto,Hel
 .lead{font-size:15px;font-weight:700;color:#0E1A35;margin:0 0 13px}
 .stale-banner{background:#fdf2d4;border:2px solid #ecd08f;border-radius:11px;padding:12px 14px;font-size:13px;margin:0 0 16px;font-weight:600;color:#6f4e12}
 .stale-banner b{color:#8a5a00}
-.hero{border-radius:13px;padding:16px 18px;margin-bottom:20px;border:2px solid}
-.hero.ok{background:#e8f6ee;border-color:#a9d9bd}
-.hero.warn{background:#fdf2d4;border-color:#ecd08f}
+.hero{border-radius:13px;padding:16px 18px;margin-bottom:20px}
 .hero .label{font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.09em}
 .hero .big{font-size:38px;font-weight:800;line-height:1.04;margin-top:3px;letter-spacing:-.02em}
 .hero .subbig{font-size:13px;font-weight:700;margin-top:4px}
 .hero .caption{font-size:13px;color:#55606f;margin-top:9px;line-height:1.5}
-.hero.ok .label,.hero.ok .big,.hero.ok .subbig{color:#14713c}
-.hero.warn .label,.hero.warn .big,.hero.warn .subbig{color:#8a5a00}
+/* hero colors are set INLINE in _card (Word/Outlook ignores chained .hero.ok selectors) */
 .sec{margin-bottom:16px}
 .sec h3{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:#0E1A35;margin:0 0 6px;padding-bottom:6px;border-bottom:2px solid #C8A24B}
 .row{display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;font-size:14.5px;border-bottom:1px solid #eef1f5}
@@ -252,7 +249,10 @@ def _card(payload):
                 f"run {_money(nut['minimum'])}/mo, which is {_money(-nut['gap'])} more than "
                 f"the {_money(nut['income'])}/mo of income still coming in. The difference has "
                 f"to come from savings until income rises.")
-    hcls = "ok" if hero_ok else "warn"
+    if hero_ok:
+        h_bg, h_bd, h_fg = "#e8f6ee", "#a9d9bd", "#14713c"   # green: essentials covered
+    else:
+        h_bg, h_bd, h_fg = "#fdf2d4", "#ecd08f", "#8a5a00"   # amber: tight or stale
 
     def rows(items):
         return "".join(
@@ -302,10 +302,10 @@ def _card(payload):
 <div class="body">
 <p class="lead">This week, in one look</p>
 {stale_banner}
-<div class="hero {hcls}">
-<div class="label">{hlabel}</div>
-<div class="big">{hbig}</div>
-{f'<div class="subbig">{hsub}</div>' if hsub else ''}
+<div class="hero" style="background:{h_bg};border:2px solid {h_bd}">
+<div class="label" style="color:{h_fg}">{hlabel}</div>
+<div class="big" style="color:{h_fg}">{hbig}</div>
+{f'<div class="subbig" style="color:{h_fg}">{hsub}</div>' if hsub else ''}
 <div class="caption">{hcap}</div>
 </div>
 <div class="sec"><h3>Paid this week</h3>
