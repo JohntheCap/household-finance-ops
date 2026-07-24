@@ -63,26 +63,30 @@ johnthecap.com `7e8aa92f-...`).
 - [ ] (Recommended, not blocking) scope Mail.Send to just john@johnthecap.com with an
       Exchange **ApplicationAccessPolicy**, so the app can't send as any other mailbox.
 
-## Phase 3 - Deploy + dry run (still nothing sent)
+## Phase 3 - Deploy + dry run (still nothing sent)  -- DONE 2026-07-24 (deploy fe91fa0)
 
-- [ ] Deploy: `cd functions && func azure functionapp publish func-hfin-hf7x2 --python`
-- [ ] Deploy summary lists `weekly_digest`, `manual_digest` alongside the sync/match functions.
-- [ ] **Sync still healthy** - trigger `/api/sync` once; confirm `status: ok`. (Proves the
-      new timer binding didn't break startup.)
-- [ ] Preview the *production* build without sending: open `GET /api/digest` (returns HTML).
-      Should match the local preview.
-- [ ] Wait for / confirm the first Sunday dry run: audit log shows `digest.render` (built,
-      not sent) because `DIGEST_SEND=false`.
+- [x] Deployed: `func azure functionapp publish func-hfin-hf7x2 --python`. Remote build ok.
+- [x] Deploy summary listed all 5: `weekly_digest`, `manual_digest`, `nightly_sync`,
+      `manual_sync`, `manual_match`. `weekly_digest` registered => `%DIGEST_SCHEDULE%` bound,
+      startup fine.
+- [x] **Sync still healthy** - `GET /api/sync` => `status: ok` (USAA checking ok; bill match
+      24 matched). Sync unaffected by the deploy.
+- [x] Production build previewed: `GET /api/digest` => HTTP 200, crest present, hero `+$898/mo`,
+      zero `preview-note` (clean email body, no preview chrome).
+- [ ] Wait for / confirm the first Sunday dry run (2026-07-26, 14:00 UTC): audit log shows
+      `digest.render` (built, not sent) because `DIGEST_SEND=false`.
 
-## Phase 4 - First real send, John only
+## Phase 4 - First real send, John only  -- IN PROGRESS (John-only ride armed 2026-07-24)
 
-- [ ] Fire a real send to yourself: `GET /api/digest?send=true`.
-- [ ] It arrives in john@johnthecap.com, renders correctly in the actual mail client
-      (Outlook mobile is the design target).
-- [ ] Audit log shows `digest.sent`. (If `digest.send_failed`, read the error string in
-      the audit row - almost always Graph consent or `DIGEST_FROM`.)
-- [ ] Let it ride for a week or two of **John-only** Sunday sends: set `DIGEST_SEND="true"`
-      with `DIGEST_CC` still unset. Confirm each Sunday lands and reads well.
+- [x] Fired a real send: `GET /api/digest?send=true` => `delivery: sent`.
+- [x] Arrived in john@johnthecap.com; renders correctly on Outlook desktop AND mobile
+      (hero green box fixed via inline colors; crest shows; budget bars via bgcolor tables).
+- [x] Audit log shows `digest.sent`.
+- [x] `DIGEST_SEND="true"` set, `DIGEST_CC` still unset -- **John-only Sunday sends are ON**
+      (first auto-send Sun 2026-07-26, 14:00 UTC = 7am PDT). Let it ride a week or two.
+
+**Also live (Sprint 5):** 6 months of Apple Card statements imported (Dec 2025-Jun 2026),
+so the budget-review section is active and shows the latest complete month (June 2026).
 
 ## Phase 5 - Go-live to Amanda (the deliberate final switch)
 
