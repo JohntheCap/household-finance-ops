@@ -13,6 +13,7 @@ Usage:
   python create_tables.py https://org29b77f3e.crm.dynamics.com
 """
 import json
+import os
 import subprocess
 import sys
 
@@ -214,7 +215,8 @@ TABLES = [
 token = subprocess.run(
     ["az", "account", "get-access-token", "--resource", ENV_URL,
      "--query", "accessToken", "-o", "tsv"],
-    capture_output=True, text=True, check=True, shell=True).stdout.strip()
+    capture_output=True, text=True, check=True,
+    shell=(os.name == "nt")).stdout.strip()   # az.cmd needs shell on Windows; POSIX must not
 
 s = requests.Session()
 s.headers.update({"Authorization": f"Bearer {token}",
