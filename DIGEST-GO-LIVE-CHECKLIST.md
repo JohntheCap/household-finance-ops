@@ -14,11 +14,20 @@ digest until `DIGEST_CC` is explicitly set - she is never in code.
 
 ## Phase 0 - Content sign-off (no Azure, no risk)
 
+- [ ] **Seed income into `hf_bill` (one-time, enables the envelope headline):**
+      `cd scripts && python seed_income.py https://org29b77f3e.crm.dynamics.com`
+      (dry-run first with `--dry-run`). Until this runs, the digest safely falls back
+      to the old `+$898/mo` plan-number hero; after it, the headline is the live
+      monthly envelope. Re-run any time an income figure changes.
 - [ ] Run the local preview and open it:
       `cd scripts && python build_digest.py https://org29b77f3e.crm.dynamics.com --out digest_preview.html`
-- [ ] Hero number reads right (essentials margin, `+$898/mo` framing).
-- [ ] `MINIMUM_NUT` and `INCOME_ACTIVE` in `functions/digest.py` are current. **Update the
-      Oregon UI figure** once the award letter confirms it (it is a placeholder).
+- [ ] Headline reads right: `$X left of <Month>'s $3,944 envelope - N days to go`, pace
+      line present, and it MOVED vs last week if spending occurred.
+- [ ] Footnote still shows the demoted plan check (`+$898/mo structural headroom`).
+- [ ] Income lives in `hf_bill` (kind='income') now, NOT `INCOME_ACTIVE`. **Update the
+      Oregon UI figure** (re-run `seed_income.py`) once the award letter confirms it -- it
+      is a placeholder, and its end date `2027-01-31` drives the auto-drop + cliff warning.
+      `MINIMUM_NUT`/`INCOME_ACTIVE` in `digest.py` now feed only the footnote.
 - [ ] Paid / Coming up / Needs attention all look sane against reality.
 - [ ] Happy with wording, section order, and what is *excluded* (routine drift stays out).
 

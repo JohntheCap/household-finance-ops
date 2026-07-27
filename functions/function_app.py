@@ -572,6 +572,12 @@ def run_digest(dv: Dataverse, trigger: str, send: bool) -> dict:
         "missed": len(n["attention"]["missed"]),
         "pending_statement": len(n["attention"]["pending_statement"]),
         "nut_gap": n["nut"]["gap"],
+        # Envelope headline (DIGEST-ENVELOPE-SPEC): recorded so two consecutive
+        # digests are provably different when spending moved (acceptance #1).
+        "envelope": (None if not n["envelope"].get("shown") else {
+            "amount": n["envelope"]["envelope"], "spent": n["envelope"]["spent"],
+            "remaining": n["envelope"]["remaining"], "days_left": n["envelope"]["days_left"]}),
+        "envelope_empty_reason": n["envelope"].get("empty_reason"),
         "empty_reason": "clean_empty" if not n["paid"]["items"] and not n["upcoming"]["items"] else None,
     }
 

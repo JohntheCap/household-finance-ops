@@ -12,6 +12,7 @@ Amanda-first: no jargon, decision-first, never cry wolf.
 Data honesty (R13 applied to the reader): the digest may NOT say "all clear" if the
 sync is stale or failed; empty sections carry an explicit empty_reason.
 """
+import calendar
 import datetime as dt
 import re
 
@@ -23,12 +24,15 @@ except Exception:                       # noqa: BLE001
     _budget = None
 
 # ---- Human-verified config (NOT recomputed from the registry) -------------
-# Minimum nut and income come from John's monthly-nut analysis; variable-category
-# amounts in hf_bill are per-transaction medians and would badly understate the
-# nut. Update when the analysis or the UI benefit firms up. Derived 2026-07-24
-# from Household-Monthly-Nut-v2 (tier1+tier2 active; blanks = Apr-Jun actual avg).
+# The MINIMUM_NUT / INCOME_ACTIVE pair now drives only the demoted FOOTNOTE
+# ("plan check: +$898/mo structural headroom"), not the headline. The headline is
+# the live monthly envelope (compute_envelope): income and Tier 1 both read from
+# hf_bill so the number MOVES with actual spend. Minimum nut and income come from
+# John's monthly-nut analysis; variable-category amounts in hf_bill are per-
+# transaction medians and would badly understate the nut. Derived 2026-07-24 from
+# Household-Monthly-Nut-v2 (tier1+tier2 active; blanks = Apr-Jun actual avg).
 MINIMUM_NUT = 7754.23           # tier 1 (fixed/debt) 4707.54 + tier 2 (essential) 3046.69
-INCOME_ACTIVE = [
+INCOME_ACTIVE = [               # footnote plan-check only; envelope reads hf_bill live
     ("VA disability", 1256.90),
     ("Amanda (Viking Vet)", 3486.24),
     ("Oregon UI (John)", 3908.67),   # PLACEHOLDER until the award letter confirms
@@ -37,6 +41,7 @@ INCOME_ACTIVE = [
 STALE_HOURS = 48                # freshness older than this => amber, never "all clear"
 UPCOMING_DAYS = 10
 PAID_WINDOW_DAYS = 7
+CLIFF_WARN_DAYS = 28            # warn for the 4 weeks before an income line ends
 
 
 def _parse_ts(ts):
@@ -53,6 +58,106 @@ def _clean_name(instance_name):
     return re.sub(r"\s+\d{4}-\d{2}$", "", instance_name or "").strip()
 
 
+# ---- Envelope headline (DIGEST-ENVELOPE-SPEC v1) --------------------------
+# The headline is actuals, not a plan number: what's left of (active income -
+# Tier 1 fixed bills) after this calendar month's variable spend. Both sides read
+# LIVE from hf_bill (income as kind='income', Tier 1 as kind='bill'+tier=1, active
+# only). ALL variable spend -- groceries, gas, dining, Amazon, cash -- counts
+# against one envelope; no category envelopes in v1. The envelope may go negative
+# and must say so honestly (neutral wording, Amanda-first).
+
+def _dateonly(v):
+    return dt.date.fromisoformat(v[:10]) if v else None
+
+
+def _spend_mtd(txns, month, tier1_matched, classify):
+    """Layer 1 spend for a 'YYYY-MM': production, not-removed, not a Tier 1 payment.
+    Outflows (amount<0) add to spend; a positive amount nets spend down ONLY if it
+    classifies as a spend-category merchant (a refund) -- never a paycheck deposit.
+    Apple Card GS Bank payments ARE counted here (card-spend proxy): they are
+    production checking outflows and are deliberately not filtered as transfers."""
+    spent = 0.0
+    for t in txns:
+        if t.get(f"{P}_sourceenv") != "production" or t.get(f"{P}_isremoved"):
+            continue
+        if (t.get(f"{P}_posteddate") or "")[:7] != month:
+            continue
+        if t.get(f"{P}_plaidtxnid") in tier1_matched:
+            continue
+        amt = float(t.get(f"{P}_amount") or 0)
+        if amt < 0:
+            spent += -amt
+        elif classify and classify(t.get(f"{P}_merchantraw"),
+                                    t.get(f"{P}_categorydetailed")) is not None:
+            spent -= amt
+    return round(spent, 2)
+
+
+def compute_envelope(bills, instances, txns, today, classify=None):
+    """Live monthly-envelope headline payload. Returns shown=False with an
+    empty_reason when income isn't configured yet, so the digest falls back to the
+    plan-number hero rather than inventing a countdown from missing data."""
+    month = f"{today:%Y-%m}"
+
+    # Income: kind='income', active, and today within [startdate, enddate]. An
+    # ended line drops out automatically (the cliff); warn for CLIFF_WARN_DAYS before.
+    income_lines, income_total, next_cliff = [], 0.0, None
+    for b in bills:
+        if b.get(f"{P}_kind") != "income" or b.get(f"{P}_status") != "active":
+            continue
+        start, end = _dateonly(b.get(f"{P}_startdate")), _dateonly(b.get(f"{P}_enddate"))
+        if (start and today < start) or (end and today > end):
+            continue
+        amt = float(b.get(f"{P}_monthlyequivalent") or 0)
+        name = _clean_name(b.get(f"{P}_name"))
+        income_total += amt
+        income_lines.append({"name": name, "amount": amt})
+        if end and today <= end <= today + dt.timedelta(days=CLIFF_WARN_DAYS):
+            if next_cliff is None or end < next_cliff["date"]:
+                next_cliff = {"name": name, "date": end, "amount": amt}
+
+    if not income_lines:
+        return {"shown": False, "empty_reason": "income_not_configured"}
+
+    # Tier 1 fixed bills, monthly-if-kept: kind='bill', tier='1', active.
+    tier1_total, tier1_keys = 0.0, set()
+    for b in bills:
+        if (b.get(f"{P}_kind") == "bill" and str(b.get(f"{P}_tier")) == "1"
+                and b.get(f"{P}_status") == "active"):
+            tier1_total += float(b.get(f"{P}_monthlyequivalent") or 0)
+            tier1_keys.add(b.get(f"{P}_billkey"))
+
+    envelope = round(income_total - tier1_total, 2)
+
+    # Transactions matched to a Tier 1 bill are the fixed side -- never variable spend.
+    tier1_matched = {r.get(f"{P}_matchedtxnid") for r in instances
+                     if r.get(f"{P}_billkey") in tier1_keys and r.get(f"{P}_matchedtxnid")}
+
+    spent = _spend_mtd(txns, month, tier1_matched, classify)
+    days_total = calendar.monthrange(today.year, today.month)[1]
+    days_gone = today.day
+    remaining = round(envelope - spent, 2)
+
+    # First weekly digest of a new month (day <= 7): recap the month just closed.
+    recap = None
+    if days_gone <= 7:
+        prev = today.replace(day=1) - dt.timedelta(days=1)
+        pspent = _spend_mtd(txns, f"{prev:%Y-%m}", tier1_matched, classify)
+        recap = {"month_label": f"{prev:%B}", "spent": pspent, "envelope": envelope,
+                 "delta": round(envelope - pspent, 2)}
+
+    return {
+        "shown": True, "empty_reason": None, "month_label": f"{today:%B}",
+        "income": round(income_total, 2), "income_lines": income_lines,
+        "tier1": round(tier1_total, 2), "envelope": envelope,
+        "spent": spent, "remaining": remaining,
+        "days_total": days_total, "days_gone": days_gone, "days_left": days_total - days_gone,
+        "pct_spent": (spent / envelope) if envelope > 0 else None,
+        "pct_month_gone": days_gone / days_total,
+        "negative": remaining < 0, "cliff": next_cliff, "recap": recap,
+    }
+
+
 # ---- Assembly (S4.1) ------------------------------------------------------
 
 def assemble(get, today, recipient_to, recipient_cc, now=None):
@@ -60,12 +165,14 @@ def assemble(get, today, recipient_to, recipient_cc, now=None):
     now = now or dt.datetime.now(dt.timezone.utc)
     instances = get(f"{P}_billinstances?$select={P}_name,{P}_billkey,{P}_status,"
                     f"{P}_duedate,{P}_paiddate,{P}_expectedamount,{P}_actualamount,"
-                    f"{P}_variancepct,{P}_notes,{P}_freshnessts")
+                    f"{P}_variancepct,{P}_notes,{P}_freshnessts,{P}_matchedtxnid")
     accounts = get(f"{P}_accounts?$select={P}_name,{P}_freshnessts,{P}_sourceenv")
     items = get(f"{P}_plaiditems?$select={P}_label,{P}_active,{P}_lastsyncstatus,{P}_lastsyncts")
-    txns = (get(f"{P}_transactions?$select={P}_posteddate,{P}_amount,{P}_merchantraw,"
-                f"{P}_categorydetailed,{P}_istransfer,{P}_isremoved,{P}_sourceenv")
-            if _budget else [])
+    bills = get(f"{P}_bills?$select={P}_billkey,{P}_name,{P}_kind,{P}_tier,{P}_status,"
+                f"{P}_monthlyequivalent,{P}_startdate,{P}_enddate")
+    # Envelope headline needs transactions unconditionally (not just for budget).
+    txns = get(f"{P}_transactions?$select={P}_plaidtxnid,{P}_posteddate,{P}_amount,"
+               f"{P}_merchantraw,{P}_categorydetailed,{P}_istransfer,{P}_isremoved,{P}_sourceenv")
 
     # Freshness / health gate (R13): any active item not 'ok', or any production
     # account staler than STALE_HOURS, blocks the green "all clear" state.
@@ -126,6 +233,12 @@ def assemble(get, today, recipient_to, recipient_cc, now=None):
     income_total = sum(a for _, a in INCOME_ACTIVE)
     gap = income_total - MINIMUM_NUT
 
+    classify = getattr(_budget, "classify", None)
+    envelope = compute_envelope(bills, instances, txns, today, classify)
+    envelope["meta"] = meta(1 if envelope.get("shown") else 0,
+                            envelope.get("empty_reason"),
+                            confidence="high" if not stale else "stale")
+
     budget_payload = (_budget.compute(txns, today) if _budget
                       else {"shown": False, "empty_reason": "budget_module_missing"})
 
@@ -148,6 +261,7 @@ def assemble(get, today, recipient_to, recipient_cc, now=None):
                 "income_lines": INCOME_ACTIVE, "covered": gap >= 0,
                 "meta": {"freshness_ts": fresh_ts, "confidence": "config",
                          "source_env": "monthly-nut-v2", "empty_reason": None}},
+        "envelope": envelope,
         "budget": budget_payload,
     }
 
@@ -244,36 +358,89 @@ def _card(payload):
     p = payload
     stale = p["stale"]
     nut = p["nut"]
-    hero_ok = nut["covered"] and not stale
+    env = p.get("envelope") or {"shown": False}
+    use_env = bool(env.get("shown"))
 
-    # The big number is the monthly margin AFTER essential bills + essential
-    # spending (tier 1+2), BEFORE any discretionary. Not free cash -- both facts
-    # must be explicit in the caption or it reads as surplus.
-    if stale:
-        hlabel = "Numbers may be stale"
-        hbig = _money(nut["gap"])
-        hsub = ""
-        hcap = "We don't have fresh bank data. Treat this week as 'probably fine, not confirmed.'"
-    elif hero_ok:
-        hlabel = "Covering the essentials? Yes"
-        hbig = f"+{_money(nut['gap'])}/mo"
-        hsub = "left after essential bills &amp; spending, before anything extra"
-        hcap = (f"Income still coming in is {_money(nut['income'])}/mo. Essentials "
-                f"&mdash; every fixed bill plus groceries, gas, and the like &mdash; run "
-                f"{_money(nut['minimum'])}/mo. That leaves {_money(nut['gap'])} a month, "
-                f"which is what's available for anything discretionary and for savings.")
+    cliff_html = recap_html = plan_html = ""
+
+    if use_env:
+        # HEADLINE = live envelope: what's left of (income - Tier 1) after this
+        # month's variable spend. Moves with actual spending. Negative is shown
+        # honestly and neutrally (Amanda-first: no blame, no alarm).
+        rem = env["remaining"]
+        month = env["month_label"]
+        hero_ok = (rem >= 0) and not stale
+        hbig = f"{_money(rem)} left" if rem >= 0 else f"{_money(-rem)} over"
+        hlabel = f"{month}&rsquo;s envelope"
+        hsub = (f"of {month}&rsquo;s {_money(env['envelope'])} to spend "
+                f"&middot; {env['days_left']} days to go")
+        if env["pct_spent"] is not None:
+            pace = (f"You&rsquo;re at {round(env['pct_spent'] * 100)}% spent with "
+                    f"{round(env['pct_month_gone'] * 100)}% of the month gone.")
+        else:
+            pace = f"{env['days_gone']} of {env['days_total']} days into the month."
+        what = ("This is all the variable spending &mdash; groceries, gas, dining, "
+                "Amazon, cash &mdash; against one pool. Fixed bills are handled below.")
+        if stale:
+            hcap = f"{pace} {what} Bank data isn&rsquo;t fresh, so treat this as close, not confirmed."
+        elif rem < 0:
+            hcap = (f"{pace} Spending&rsquo;s past the plan for {month} &mdash; nothing&rsquo;s "
+                    f"overdue, it just means less cushion this month. {what}")
+        else:
+            hcap = f"{pace} {what}"
+
+        if env.get("cliff"):
+            c = env["cliff"]
+            cliff_html = (f'<div class="watch"><b>{c["name"]} ends {_fmt_date(c["date"])}.</b> '
+                          f'After that the envelope shrinks by about {_money(c["amount"])}/mo '
+                          f'&mdash; worth planning for now.</div>')
+        if env.get("recap"):
+            r = env["recap"]
+            side = (f'{_money(r["delta"])} under' if r["delta"] >= 0
+                    else f'{_money(-r["delta"])} over')
+            recap_html = (f'<div class="note">{r["month_label"]} recap: spent '
+                          f'{_money(r["spent"])} of the {_money(r["envelope"])} envelope '
+                          f'&mdash; {side}.</div>')
+
+        # The old headline, demoted to a footnote (spec layout item 4).
+        if nut["covered"]:
+            plan_html = (f'<div class="note" style="font-size:12px;color:#8a93a1">Plan check: '
+                         f'essentials covered, +{_money(nut["gap"])}/mo structural headroom.</div>')
+        else:
+            plan_html = (f'<div class="note" style="font-size:12px;color:#8a93a1">Plan check: '
+                         f'essentials run {_money(-nut["gap"])}/mo over the income still coming in.</div>')
     else:
-        hlabel = "Tight this month"
-        hbig = f"{_money(nut['gap'])}/mo"
-        hsub = "essentials cost more than the income still coming in"
-        hcap = (f"Essentials &mdash; fixed bills plus groceries, gas, and the like &mdash; "
-                f"run {_money(nut['minimum'])}/mo, which is {_money(-nut['gap'])} more than "
-                f"the {_money(nut['income'])}/mo of income still coming in. The difference has "
-                f"to come from savings until income rises.")
+        # Fallback (income not seeded yet): the original plan-number hero. The big
+        # number is the monthly margin AFTER essential bills + essential spending
+        # (tier 1+2), BEFORE any discretionary -- both facts stay explicit or it
+        # reads as surplus.
+        hero_ok = nut["covered"] and not stale
+        if stale:
+            hlabel = "Numbers may be stale"
+            hbig = _money(nut["gap"])
+            hsub = ""
+            hcap = "We don't have fresh bank data. Treat this week as 'probably fine, not confirmed.'"
+        elif hero_ok:
+            hlabel = "Covering the essentials? Yes"
+            hbig = f"+{_money(nut['gap'])}/mo"
+            hsub = "left after essential bills &amp; spending, before anything extra"
+            hcap = (f"Income still coming in is {_money(nut['income'])}/mo. Essentials "
+                    f"&mdash; every fixed bill plus groceries, gas, and the like &mdash; run "
+                    f"{_money(nut['minimum'])}/mo. That leaves {_money(nut['gap'])} a month, "
+                    f"which is what's available for anything discretionary and for savings.")
+        else:
+            hlabel = "Tight this month"
+            hbig = f"{_money(nut['gap'])}/mo"
+            hsub = "essentials cost more than the income still coming in"
+            hcap = (f"Essentials &mdash; fixed bills plus groceries, gas, and the like &mdash; "
+                    f"run {_money(nut['minimum'])}/mo, which is {_money(-nut['gap'])} more than "
+                    f"the {_money(nut['income'])}/mo of income still coming in. The difference has "
+                    f"to come from savings until income rises.")
+
     if hero_ok:
-        h_bg, h_bd, h_fg = "#e8f6ee", "#a9d9bd", "#14713c"   # green: essentials covered
+        h_bg, h_bd, h_fg = "#e8f6ee", "#a9d9bd", "#14713c"   # green: on track
     else:
-        h_bg, h_bd, h_fg = "#fdf2d4", "#ecd08f", "#8a5a00"   # amber: tight or stale
+        h_bg, h_bd, h_fg = "#fdf2d4", "#ecd08f", "#8a5a00"   # amber: over, tight, or stale
 
     def rows(items):
         return "".join(
@@ -330,6 +497,7 @@ def _card(payload):
 {f'<div class="subbig" style="color:{h_fg}">{hsub}</div>' if hsub else ''}
 <div class="caption">{hcap}</div>
 </div>
+{cliff_html}{recap_html}
 <div class="sec"><h3>Paid this week</h3>
 {rows(paid['items']) if paid['items'] else '<div class="empty">Nothing posted in the last 7 days.</div>'}
 {f'<div class="sectotal"><span>{len(paid["items"])} paid</span><span>{_money(paid["total"])}</span></div>' if paid['items'] else ''}
@@ -340,6 +508,7 @@ def _card(payload):
 </div>
 <div class="sec"><h3>Needs attention</h3>{att_html}</div>
 {budget_html}
+{plan_html}
 </div>
 <div class="footer">Generated {_fmt_gen(gen)} &middot; {footer_status}</div>
 </div>"""
