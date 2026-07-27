@@ -1,6 +1,11 @@
 # Sprint 6 Proposal - Household Finance Ops Agent
 
-**Author:** Claude (drafted with John) | **Date:** 2026-07-27 | **Status:** DRAFT - awaiting John's sign-off
+**Author:** Claude (drafted with John) | **Date:** 2026-07-27 | **Status:** SIGNED OFF 2026-07-27
+
+**Decisions (John, 2026-07-27):** cushion **$200**; income modeled per-line with cadence
+derived from deposit history; **option (b)** - the monthly envelope stays a plan, the new
+weekly runway line is the honest-cash view and excludes Oregon UI until it actually posts;
+**cash-runway is this sprint** (reliability hardening is Sprint 7, before Amanda go-live).
 
 **Predecessor:** Sprint 5 (budget review) + the envelope-headline change (spec v1, live
 2026-07-27) are done. The digest now answers *"are we okay this month?"* with a live
@@ -79,15 +84,36 @@ carried three sprints. Fold it in and close it.
 - Anything touching money movement. The runway line says "you may need to move something up";
   the human moves it, at the biller.
 
-## Open questions for John
+## Open questions - RESOLVED 2026-07-27 (John)
 
-1. **Cushion size.** What's the floor you want checking to never drop below (the minus-cushion
-   in the runway math)? A number, or "just tell me the raw balance-after-bills."
-2. **"Next income" granularity.** Model each income line's own pay date (VA ~1st, Amanda's
-   payroll cadence, UI weekly), or simplify to the next date *any* income lands? The former is
-   more accurate; the latter is less data to maintain.
-3. **One line or a small section?** A single line under the envelope, or its own "Cash this
-   week" section? (Amanda-first leans toward one line unless it's earning the space.)
+1. **Cushion size = $200.** Tight, reflecting the limited income during the runway. Checking
+   should never be forecast below $200 before payday without flagging it.
+2. **Model each income line's own pay date** (more accurate). Cadence DERIVED from
+   `hf_transaction` deposit history 2026-07-27 (not guessed):
+   - **VA disability** - monthly, fixed **$1,256.90**, posts the **last business day** of the
+     prior month (observed 4/29, 5/28, 6/29 -> "for the 1st," a day or two early).
+   - **Amanda (Viking Vet)** - **biweekly, every 14 days, Fridays**. Anchor **2026-07-24**;
+     next **2026-08-07**, then 8/21, 9/4... Amount varies (~$1,200-1,840; recent ~$1,335) -
+     forecast uses a recent typical, not the smoothed monthly-equivalent.
+   - **Oregon UI** - **not started; no deposits yet.** Excluded from forecast income until the
+     first payment posts (same event that resolves the placeholder amount + start date). Until
+     then the envelope's income is overstated by $3,908.67 - see note below.
+   - *(Valley Ridge payroll, John's former job, ends with the 7/17 final check - correctly not
+     an active income line.)*
+3. **One line** under the envelope (default), unless review shows it earns its own section.
+
+## Note surfaced during cadence derivation (2026-07-27)
+
+The envelope headline currently counts **$3,908.67/mo of Oregon UI that has not begun** (no
+deposits observed). The number is honest as a *plan* (income John expects) but optimistic as
+*cash*. Two clean options, John's call - can ride in this sprint or stand alone:
+  - **(a)** Flip the UI income line to a not-yet-active status (or set its `startdate` to the
+    real UI start once known) so it drops out of the *envelope* until cash actually arrives,
+    with a one-line "assumes UI starts <date>" note; or
+  - **(b)** Leave it (plan view) and let only the *runway* line exclude it, so the monthly
+    envelope stays a plan while the weekly cash line stays real.
+Recommendation: **(b)** - keep the envelope a plan, make the new runway line the honest-cash
+view. That's exactly the monthly-plan-vs-weekly-cash split this sprint exists to create.
 
 ## Risks
 
