@@ -39,7 +39,8 @@ def main():
     token = subprocess.run(
         ["az", "account", "get-access-token", "--resource", ENV_URL,
          "--query", "accessToken", "-o", "tsv"],
-        capture_output=True, text=True, check=True, shell=True).stdout.strip()
+        capture_output=True, text=True, check=True,
+        shell=(os.name == "nt")).stdout.strip()   # az.cmd needs shell on Windows; POSIX must not
     s = requests.Session()
     s.headers.update({"Authorization": f"Bearer {token}", "Accept": "application/json",
                       "OData-MaxVersion": "4.0", "OData-Version": "4.0"})

@@ -19,12 +19,18 @@ Usage:
   python seed_income.py https://org29b77f3e.crm.dynamics.com --dry-run
 """
 import json
+import os
 import subprocess
 import sys
 import uuid
 from datetime import datetime, timezone
 
 import requests
+
+# az is a .cmd on Windows (needs the shell to resolve) but a normal executable on
+# POSIX, where shell=True with a list arg would run bare `az` and drop the token
+# args. Match the platform so the same script runs on John's Windows box and here.
+_AZ_SHELL = os.name == "nt"
 
 ENV_URL = sys.argv[1].rstrip("/")
 DRY_RUN = "--dry-run" in sys.argv
@@ -91,7 +97,7 @@ def main():
     token = subprocess.run(
         ["az", "account", "get-access-token", "--resource", ENV_URL,
          "--query", "accessToken", "-o", "tsv"],
-        capture_output=True, text=True, check=True, shell=True).stdout.strip()
+        capture_output=True, text=True, check=True, shell=_AZ_SHELL).stdout.strip()
 
     s = requests.Session()
     s.headers.update({"Authorization": f"Bearer {token}",
