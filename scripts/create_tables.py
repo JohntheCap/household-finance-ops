@@ -90,6 +90,12 @@ TABLES = [
          col_text("hf_plaidaccountid", "Plaid Account ID", 100),
          col_text("hf_mask", "Mask", 10),
          col_text("hf_type", "Account Type", 50),
+         # Sprint 6: the sync already fetches balances from /accounts/get and threw
+         # them away. Store both so the cash-runway forecast has a spendable figure
+         # (available = current minus holds/pending; falls back to current if null).
+         # Snapshot values -- hf_freshnessts is their as-of; never render without it.
+         col_money("hf_balancecurrent", "Balance (Current)"),
+         col_money("hf_balanceavailable", "Balance (Available)"),
          col_text("hf_freshnessts", "Freshness Timestamp", 40),
          col_text("hf_sourceenv", "Source Environment", 20),
      ],

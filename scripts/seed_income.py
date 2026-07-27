@@ -42,18 +42,29 @@ P = "hf"
 # is a PLACEHOLDER until the award letter confirms the weekly benefit amount, and
 # carries an end date -- after it, the line falls out of window and the envelope
 # shrinks on its own (the digest warns for the 4 weeks before).
+# cadence (Sprint 6): drives the cash-runway "next paycheck" date. Derived from
+# hf_transaction deposit history 2026-07-27. freq 'monthly' = VA-style end-of-month
+# posting; 'biweekly' = anchor + 14-day multiples. An income line with freq=None is
+# EXCLUDED from the runway (but still counts in the monthly envelope -- option b):
+# that's how not-yet-started Oregon UI stays out of the cash view until it posts.
 INCOME = [
     {"bill_key": "income-va-disability",       "name": "VA disability",
-     "monthly": 1256.90, "end": None,
-     "notes": "VA service-connected disability. Fixed monthly."},
+     "monthly": 1256.90, "end": None, "freq": "monthly", "anchor": None,
+     "notes": "VA service-connected disability. Fixed monthly; posts the last "
+              "business day for the coming month (observed 4/29, 5/28, 6/29)."},
     {"bill_key": "income-amanda-viking-vet",   "name": "Amanda (Viking Vet)",
-     "monthly": 3486.24, "end": None,
-     "notes": "Amanda's Viking Vet net pay (monthly-equivalent)."},
+     "monthly": 3486.24, "end": None, "freq": "biweekly", "anchor": "2026-07-24",
+     "notes": "Amanda's Viking Vet net pay. Biweekly, Fridays; anchor 2026-07-24 "
+              "(next 2026-08-07). Amount varies ~$1,200-1,840; monthly here is the "
+              "smoothed equivalent for the envelope, not a per-check figure."},
     {"bill_key": "income-oregon-ui-john",      "name": "Oregon UI (John)",
-     "monthly": 3908.67, "end": "2027-01-31",
+     "monthly": 3908.67, "end": "2027-01-31", "freq": None, "anchor": None,
      "notes": "PLACEHOLDER until the award letter confirms the weekly benefit "
-              "amount. End date is the benefit-year cliff -- envelope drops this "
-              "line automatically after it, digest warns 4 weeks prior."},
+              "amount. NOT STARTED -- no deposits yet, so freq=None keeps it OUT of "
+              "the cash-runway forecast (still counts in the monthly envelope as a "
+              "plan). Set freq='weekly'/'biweekly' + anchor when the first UI payment "
+              "posts. End date is the benefit-year cliff -- envelope drops this line "
+              "automatically after it, digest warns 4 weeks prior."},
 ]
 
 
@@ -73,7 +84,8 @@ def to_record(r, ts):
         f"{P}_amounttype": "fixed",
         f"{P}_expectedamount": round(r["monthly"], 2),
         f"{P}_monthlyequivalent": round(r["monthly"], 2),
-        f"{P}_frequency": "monthly",
+        f"{P}_frequency": r.get("freq") or "",
+        f"{P}_anchordate": r.get("anchor"),
         f"{P}_paymentaccount": "unknown",
         f"{P}_matchmode": "none",
         f"{P}_enddate": r["end"],

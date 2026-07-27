@@ -42,6 +42,8 @@ STALE_HOURS = 48                # freshness older than this => amber, never "all
 UPCOMING_DAYS = 10
 PAID_WINDOW_DAYS = 7
 CLIFF_WARN_DAYS = 28            # warn for the 4 weeks before an income line ends
+CASH_CUSHION = 200.0           # Sprint 6: floor checking shouldn't drop below before payday
+FORECAST_ACCOUNT_MASK = "0666"  # USAA checking ...0666 is the forecast target (CLAUDE.md)
 
 
 def _parse_ts(ts):
@@ -158,6 +160,111 @@ def compute_envelope(bills, instances, txns, today, classify=None):
     }
 
 
+# ---- Cash-runway forecast (Sprint 6) --------------------------------------
+# Short-horizon companion to the envelope: "will checking cover the scheduled
+# bills due before the next paycheck?" The envelope is a whole-month plan and
+# can read healthy while checking dips mid-cycle; this is the running-cash view.
+# Option (b): the runway counts only income lines with a real cadence, so not-
+# yet-started Oregon UI is excluded here while still counting in the envelope.
+# Scope honesty: only SCHEDULED (registry) bills are modeled -- ongoing Apple
+# Card spend isn't a registry bill, so the line is worded "scheduled bills",
+# never "all spending" (the envelope carries variable spend).
+
+def _last_business_day(year, month):
+    d = dt.date(year, month, calendar.monthrange(year, month)[1])
+    while d.weekday() >= 5:                 # walk back off Sat/Sun (holidays ignored, +-1d)
+        d -= dt.timedelta(days=1)
+    return d
+
+
+def _next_income_date(freq, anchor, today):
+    """Next deposit date on/after today, or None if the line has no usable cadence
+    (which is how not-yet-started income stays out of the runway)."""
+    freq = (freq or "").lower()
+    if freq == "biweekly":
+        a = _dateonly(anchor)
+        if a is None:
+            return None
+        delta = (today - a).days
+        if delta <= 0:
+            return a
+        rem = delta % 14
+        return today if rem == 0 else today + dt.timedelta(days=14 - rem)
+    if freq == "weekly":
+        a = _dateonly(anchor)
+        if a is None:
+            return None
+        delta = (today - a).days
+        if delta <= 0:
+            return a
+        rem = delta % 7
+        return today if rem == 0 else today + dt.timedelta(days=7 - rem)
+    if freq == "monthly":                   # VA-style: posts ~last business day of month
+        lbd = _last_business_day(today.year, today.month)
+        if lbd >= today:
+            return lbd
+        ny, nm = (today.year + (today.month == 12)), (1 if today.month == 12 else today.month + 1)
+        return _last_business_day(ny, nm)
+    return None
+
+
+def compute_runway(bills, instances, accounts, today):
+    """Safe-to-next-paycheck cash figure. shown=False (with empty_reason) when the
+    balance snapshot or income cadence isn't available yet -- never a false 'safe'."""
+    acct = next((a for a in accounts
+                 if (a.get(f"{P}_mask") or "") == FORECAST_ACCOUNT_MASK
+                 and a.get(f"{P}_sourceenv") == "production"), None)
+    if not acct:
+        return {"shown": False, "empty_reason": "forecast_account_missing"}
+    avail, curr = acct.get(f"{P}_balanceavailable"), acct.get(f"{P}_balancecurrent")
+    bal = avail if avail is not None else curr
+    if bal is None:
+        return {"shown": False, "empty_reason": "balance_not_stored"}
+    bal = float(bal)
+
+    pay_of = {b.get(f"{P}_billkey"): (b.get(f"{P}_paymentaccount") or "")
+              for b in bills if b.get(f"{P}_kind") == "bill"}
+
+    nexts = []
+    for b in bills:
+        if b.get(f"{P}_kind") == "income" and b.get(f"{P}_status") == "active":
+            nd = _next_income_date(b.get(f"{P}_frequency"), b.get(f"{P}_anchordate"), today)
+            if nd:
+                nexts.append((nd, _clean_name(b.get(f"{P}_name"))))
+    if not nexts:
+        return {"shown": False, "empty_reason": "income_cadence_missing"}
+    horizon, income_name = min(nexts, key=lambda x: x[0])
+
+    # Scheduled bills paid from CHECKING, due between today and the next paycheck.
+    # Card-paid bills don't draw this balance; unknown payment account counts
+    # (conservative -- better to over-reserve than promise a false 'safe').
+    due_items, due_total = [], 0.0
+    for r in instances:
+        if r.get(f"{P}_status") != "upcoming":
+            continue
+        dd = _dateonly(r.get(f"{P}_duedate"))
+        if not dd or not (today <= dd <= horizon):
+            continue
+        if pay_of.get(r.get(f"{P}_billkey"), "") == "applecard":
+            continue
+        amt = float(r.get(f"{P}_expectedamount") or 0)
+        due_total += amt
+        due_items.append({"name": _clean_name(r.get(f"{P}_name")), "date": dd, "amount": amt})
+
+    due_total = round(due_total, 2)
+    after = round(bal - due_total, 2)
+    safe = round(after - CASH_CUSHION, 2)
+    due_items.sort(key=lambda x: x["date"])
+    return {
+        "shown": True, "empty_reason": None,
+        "balance": round(bal, 2), "balance_type": "available" if avail is not None else "current",
+        "income_name": income_name, "income_date": horizon,
+        "days_to_income": (horizon - today).days,
+        "bills_due": due_total, "bill_items": due_items, "cushion": CASH_CUSHION,
+        "after_bills": after, "safe": safe, "ok": safe >= 0,
+    }
+
+
 # ---- Assembly (S4.1) ------------------------------------------------------
 
 def assemble(get, today, recipient_to, recipient_cc, now=None):
@@ -166,10 +273,12 @@ def assemble(get, today, recipient_to, recipient_cc, now=None):
     instances = get(f"{P}_billinstances?$select={P}_name,{P}_billkey,{P}_status,"
                     f"{P}_duedate,{P}_paiddate,{P}_expectedamount,{P}_actualamount,"
                     f"{P}_variancepct,{P}_notes,{P}_freshnessts,{P}_matchedtxnid")
-    accounts = get(f"{P}_accounts?$select={P}_name,{P}_freshnessts,{P}_sourceenv")
+    accounts = get(f"{P}_accounts?$select={P}_name,{P}_mask,{P}_balancecurrent,"
+                   f"{P}_balanceavailable,{P}_freshnessts,{P}_sourceenv")
     items = get(f"{P}_plaiditems?$select={P}_label,{P}_active,{P}_lastsyncstatus,{P}_lastsyncts")
     bills = get(f"{P}_bills?$select={P}_billkey,{P}_name,{P}_kind,{P}_tier,{P}_status,"
-                f"{P}_monthlyequivalent,{P}_startdate,{P}_enddate")
+                f"{P}_monthlyequivalent,{P}_startdate,{P}_enddate,{P}_paymentaccount,"
+                f"{P}_frequency,{P}_anchordate")
     # Envelope headline needs transactions unconditionally (not just for budget).
     txns = get(f"{P}_transactions?$select={P}_plaidtxnid,{P}_posteddate,{P}_amount,"
                f"{P}_merchantraw,{P}_categorydetailed,{P}_istransfer,{P}_isremoved,{P}_sourceenv")
@@ -239,6 +348,11 @@ def assemble(get, today, recipient_to, recipient_cc, now=None):
                             envelope.get("empty_reason"),
                             confidence="high" if not stale else "stale")
 
+    runway = compute_runway(bills, instances, accounts, today)
+    runway["meta"] = meta(1 if runway.get("shown") else 0,
+                          runway.get("empty_reason"),
+                          confidence="high" if not stale else "stale")
+
     budget_payload = (_budget.compute(txns, today) if _budget
                       else {"shown": False, "empty_reason": "budget_module_missing"})
 
@@ -262,6 +376,7 @@ def assemble(get, today, recipient_to, recipient_cc, now=None):
                 "meta": {"freshness_ts": fresh_ts, "confidence": "config",
                          "source_env": "monthly-nut-v2", "empty_reason": None}},
         "envelope": envelope,
+        "runway": runway,
         "budget": budget_payload,
     }
 
@@ -437,6 +552,26 @@ def _card(payload):
                     f"the {_money(nut['income'])}/mo of income still coming in. The difference has "
                     f"to come from savings until income rises.")
 
+    # Cash-runway line (Sprint 6) -- under the hero, in either hero mode. Suppressed
+    # when stale: a stale balance snapshot must never render a confident "safe".
+    rw = p.get("runway") or {"shown": False}
+    runway_html = ""
+    if rw.get("shown") and not stale:
+        pay = f"{rw['income_name']} {_fmt_date(rw['income_date'])}"
+        led = "" if rw["balance_type"] == "available" else " (ledger)"
+        if rw["ok"]:
+            runway_html = (
+                f'<div class="note"><b>Safe to payday.</b> Checking {_money(rw["balance"])}{led} '
+                f'&minus; {_money(rw["bills_due"])} in scheduled bills before {pay} leaves '
+                f'{_money(rw["after_bills"])} &mdash; {_money(rw["safe"])} above your '
+                f'{_money(rw["cushion"])} cushion.</div>')
+        else:
+            runway_html = (
+                f'<div class="watch"><b>Tight before {pay}.</b> Checking {_money(rw["balance"])}{led} '
+                f'&minus; {_money(rw["bills_due"])} in scheduled bills leaves {_money(rw["after_bills"])} '
+                f'&mdash; {_money(abs(rw["safe"]))} under your {_money(rw["cushion"])} cushion. '
+                f'Worth moving a payment or moving money in.</div>')
+
     if hero_ok:
         h_bg, h_bd, h_fg = "#e8f6ee", "#a9d9bd", "#14713c"   # green: on track
     else:
@@ -497,7 +632,7 @@ def _card(payload):
 {f'<div class="subbig" style="color:{h_fg}">{hsub}</div>' if hsub else ''}
 <div class="caption">{hcap}</div>
 </div>
-{cliff_html}{recap_html}
+{runway_html}{cliff_html}{recap_html}
 <div class="sec"><h3>Paid this week</h3>
 {rows(paid['items']) if paid['items'] else '<div class="empty">Nothing posted in the last 7 days.</div>'}
 {f'<div class="sectotal"><span>{len(paid["items"])} paid</span><span>{_money(paid["total"])}</span></div>' if paid['items'] else ''}

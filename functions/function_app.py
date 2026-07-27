@@ -164,10 +164,14 @@ def sync_item(dv: Dataverse, item: dict) -> dict:
     accounts = plaid_post("/accounts/get", {"access_token": access_token})["accounts"]
     ts = _now()
     for a in accounts:
+        bal = a.get("balances") or {}
         dv.upsert(f"{P}_accounts", f"{P}_plaidaccountid", a["account_id"], {
             f"{P}_name": a["name"],
             f"{P}_mask": a.get("mask") or "",
             f"{P}_type": f"{a['type']}/{a.get('subtype')}",
+            # Sprint 6: persist balances (were discarded) for the cash-runway forecast.
+            f"{P}_balancecurrent": bal.get("current"),
+            f"{P}_balanceavailable": bal.get("available"),
             f"{P}_freshnessts": ts,
             f"{P}_sourceenv": SOURCE_ENV,
         })
@@ -578,6 +582,12 @@ def run_digest(dv: Dataverse, trigger: str, send: bool) -> dict:
             "amount": n["envelope"]["envelope"], "spent": n["envelope"]["spent"],
             "remaining": n["envelope"]["remaining"], "days_left": n["envelope"]["days_left"]}),
         "envelope_empty_reason": n["envelope"].get("empty_reason"),
+        # Cash-runway (Sprint 6): safe-to-payday figure, or the reason it's absent.
+        "runway": (None if not n["runway"].get("shown") else {
+            "balance": n["runway"]["balance"], "bills_due": n["runway"]["bills_due"],
+            "safe": n["runway"]["safe"], "ok": n["runway"]["ok"],
+            "income_date": str(n["runway"]["income_date"])}),
+        "runway_empty_reason": n["runway"].get("empty_reason"),
         "empty_reason": "clean_empty" if not n["paid"]["items"] and not n["upcoming"]["items"] else None,
     }
 
