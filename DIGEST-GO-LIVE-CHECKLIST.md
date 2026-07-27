@@ -12,26 +12,29 @@ digest until `DIGEST_CC` is explicitly set - she is never in code.
 
 ---
 
-## Phase 0 - Content sign-off (no Azure, no risk)
+## Phase 0 - Content sign-off (no Azure, no risk)  -- DONE 2026-07-27 (envelope headline)
 
-- [ ] **Seed income into `hf_bill` (one-time, enables the envelope headline):**
-      `cd scripts && python seed_income.py https://org29b77f3e.crm.dynamics.com`
-      (dry-run first with `--dry-run`). Until this runs, the digest safely falls back
-      to the old `+$898/mo` plan-number hero; after it, the headline is the live
-      monthly envelope. Re-run any time an income figure changes.
-- [ ] Run the local preview and open it:
-      `cd scripts && python build_digest.py https://org29b77f3e.crm.dynamics.com --out digest_preview.html`
-- [ ] Headline reads right: `$X left of <Month>'s $3,944 envelope - N days to go`, pace
-      line present, and it MOVED vs last week if spending occurred.
-- [ ] Footnote still shows the demoted plan check (`+$898/mo structural headroom`).
-- [ ] Income lives in `hf_bill` (kind='income') now, NOT `INCOME_ACTIVE`. **Update the
-      Oregon UI figure** (re-run `seed_income.py`) once the award letter confirms it -- it
-      is a placeholder, and its end date `2027-01-31` drives the auto-drop + cliff warning.
-      `MINIMUM_NUT`/`INCOME_ACTIVE` in `digest.py` now feed only the footnote.
-- [ ] Paid / Coming up / Needs attention all look sane against reality.
-- [ ] Happy with wording, section order, and what is *excluded* (routine drift stays out).
+- [x] **Seed income into `hf_bill`** -- ran `seed_income.py` 2026-07-27 (audit run_id
+      `cac6dc1a`): 3 lines, $8,651.81/mo. Envelope headline now live (was falling back
+      to the `+$898/mo` plan hero before). Re-run any time an income figure changes.
+- [x] Ran the local preview against live Dataverse (`build_digest.py`); on-disk
+      `scripts/digest_preview.html` refreshed (gitignored -- rendered financial data).
+- [x] Headline reads right: `July: $1,259 over $3,944 envelope, 4 days to go`, pace line
+      present ("132% spent, 87% of the month gone"). Honestly negative -- the point of the
+      feature; it will move as spend/cuts land.
+- [x] Footnote shows the demoted plan check (`+$898/mo structural headroom`).
+- [x] Income lives in `hf_bill` (kind='income'), NOT `INCOME_ACTIVE`; `MINIMUM_NUT`/
+      `INCOME_ACTIVE` in `digest.py` now feed only the footnote.
+- [x] Paid / Coming up / Needs attention look sane against reality (3 paid, 8 upcoming,
+      2 missed, 1 pending-statement -- John reviewed 2026-07-27).
+- [x] Happy with wording, section order, and what is *excluded* (routine drift stays out).
 
 *Iterate here freely - this step touches nothing in production.*
+
+> **Still open (not a Phase-0 blocker):** the Oregon UI figure ($3,908.67) is a
+> PLACEHOLDER. When the award letter confirms the weekly benefit amount, re-run
+> `seed_income.py` with the real number. Its end date `2027-01-31` drives the
+> envelope auto-drop + the 4-week cliff warning.
 
 ## Phase 1 - App settings (BEFORE deploy - ordering matters)  -- DONE 2026-07-24
 
