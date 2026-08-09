@@ -355,6 +355,10 @@ def assemble(get, today, recipient_to, recipient_cc, now=None):
 
     budget_payload = (_budget.compute(txns, today) if _budget
                       else {"shown": False, "empty_reason": "budget_module_missing"})
+    # In-month (MTD) budget: the live "how much is left this month" companion to the
+    # retrospective review. Headline category view; last-month stays as reconciliation.
+    budget_inmonth = (_budget.compute_inmonth(txns, today) if _budget
+                      else {"shown": False, "empty_reason": "budget_module_missing"})
 
     return {
         "generated_at": now.isoformat(),
@@ -378,6 +382,7 @@ def assemble(get, today, recipient_to, recipient_cc, now=None):
         "envelope": envelope,
         "runway": runway,
         "budget": budget_payload,
+        "budget_inmonth": budget_inmonth,
     }
 
 
@@ -615,6 +620,8 @@ def _card(payload):
     footer_status = ('<span class="ok">bank data fresh &mdash; nothing overdue, confirmed &#10003;</span>'
                      if not stale else
                      '<span class="bad">bank data stale &mdash; not confirmed this week</span>')
+    inmonth_html = (_budget.render_inmonth_section(p["budget_inmonth"])
+                    if _budget and p.get("budget_inmonth") else "")
     budget_html = _budget.render_section(p["budget"]) if _budget and p.get("budget") else ""
 
     return f"""<div class="card">
@@ -642,6 +649,7 @@ def _card(payload):
 {f'<div class="sectotal"><span>{len(upcoming["items"])} bills</span><span>{_money(upcoming["total"])}</span></div>' if upcoming['items'] else ''}
 </div>
 <div class="sec"><h3>Needs attention</h3>{att_html}</div>
+{inmonth_html}
 {budget_html}
 {plan_html}
 </div>
