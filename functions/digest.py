@@ -95,43 +95,62 @@ def _spend_mtd(txns, month, tier1_matched, classify):
     return round(spent, 2)
 
 
+def _income_tier1_at(bills, on):
+    """Active income minus active Tier 1 bills, BOTH windowed to [startdate, enddate]
+    as of date `on`. Tier 1 now honors dates too, so a future-dated line (the Sep-1
+    savings sweep) or an ended one only counts while actually in effect."""
+    inc = t1 = 0.0
+    for b in bills:
+        if b.get(f"{P}_status") != "active":
+            continue
+        kind, tier = b.get(f"{P}_kind"), str(b.get(f"{P}_tier"))
+        is_income, is_t1 = kind == "income", (kind == "bill" and tier == "1")
+        if not (is_income or is_t1):
+            continue
+        start, end = _dateonly(b.get(f"{P}_startdate")), _dateonly(b.get(f"{P}_enddate"))
+        if (start and on < start) or (end and on > end):
+            continue
+        amt = float(b.get(f"{P}_monthlyequivalent") or 0)
+        if is_income:
+            inc += amt
+        else:
+            t1 += amt
+    return round(inc, 2), round(t1, 2)
+
+
 def compute_envelope(bills, instances, txns, today, classify=None):
     """Live monthly-envelope headline payload. Returns shown=False with an
     empty_reason when income isn't configured yet, so the digest falls back to the
     plan-number hero rather than inventing a countdown from missing data."""
     month = f"{today:%Y-%m}"
 
-    # Income: kind='income', active, and today within [startdate, enddate]. An
-    # ended line drops out automatically (the cliff); warn for CLIFF_WARN_DAYS before.
-    income_lines, income_total, next_cliff = [], 0.0, None
+    # Income lines active and in-window today (for display).
+    income_lines = []
     for b in bills:
         if b.get(f"{P}_kind") != "income" or b.get(f"{P}_status") != "active":
             continue
         start, end = _dateonly(b.get(f"{P}_startdate")), _dateonly(b.get(f"{P}_enddate"))
         if (start and today < start) or (end and today > end):
             continue
-        amt = float(b.get(f"{P}_monthlyequivalent") or 0)
-        name = _clean_name(b.get(f"{P}_name"))
-        income_total += amt
-        income_lines.append({"name": name, "amount": amt})
-        if end and today <= end <= today + dt.timedelta(days=CLIFF_WARN_DAYS):
-            if next_cliff is None or end < next_cliff["date"]:
-                next_cliff = {"name": name, "date": end, "amount": amt}
+        income_lines.append({"name": _clean_name(b.get(f"{P}_name")),
+                             "amount": float(b.get(f"{P}_monthlyequivalent") or 0)})
 
     if not income_lines:
         return {"shown": False, "empty_reason": "income_not_configured"}
 
-    # Tier 1 fixed bills, monthly-if-kept: kind='bill', tier='1', active.
-    tier1_total, tier1_keys = 0.0, set()
-    for b in bills:
-        if (b.get(f"{P}_kind") == "bill" and str(b.get(f"{P}_tier")) == "1"
-                and b.get(f"{P}_status") == "active"):
-            tier1_total += float(b.get(f"{P}_monthlyequivalent") or 0)
-            tier1_keys.add(b.get(f"{P}_billkey"))
-
+    income_total, tier1_total = _income_tier1_at(bills, today)
     envelope = round(income_total - tier1_total, 2)
 
-    # Transactions matched to a Tier 1 bill are the fixed side -- never variable spend.
+    # Tier 1 keys in effect today; their matched transactions are the fixed side.
+    tier1_keys = set()
+    for b in bills:
+        if not (b.get(f"{P}_kind") == "bill" and str(b.get(f"{P}_tier")) == "1"
+                and b.get(f"{P}_status") == "active"):
+            continue
+        start, end = _dateonly(b.get(f"{P}_startdate")), _dateonly(b.get(f"{P}_enddate"))
+        if (start and today < start) or (end and today > end):
+            continue
+        tier1_keys.add(b.get(f"{P}_billkey"))
     tier1_matched = {r.get(f"{P}_matchedtxnid") for r in instances
                      if r.get(f"{P}_billkey") in tier1_keys and r.get(f"{P}_matchedtxnid")}
 
@@ -139,6 +158,32 @@ def compute_envelope(bills, instances, txns, today, classify=None):
     days_total = calendar.monthrange(today.year, today.month)[1]
     days_gone = today.day
     remaining = round(envelope - spent, 2)
+
+    # Net-aware plan-change heads-up (replaces the naive "an income line ends" cliff).
+    # Find the soonest income/Tier-1 start OR end within CLIFF_WARN_DAYS, compute the
+    # envelope just after it, and warn ONLY on a materially negative NET change (>=15%).
+    # A replacement income that offsets a loss (UI -> owner draw) stays silent.
+    cliff = None
+    horizon = today + dt.timedelta(days=CLIFF_WARN_DAYS)
+    boundaries = set()
+    for b in bills:
+        if b.get(f"{P}_status") != "active":
+            continue
+        kind, tier = b.get(f"{P}_kind"), str(b.get(f"{P}_tier"))
+        if not (kind == "income" or (kind == "bill" and tier == "1")):
+            continue
+        s, e = _dateonly(b.get(f"{P}_startdate")), _dateonly(b.get(f"{P}_enddate"))
+        if s and today < s <= horizon:
+            boundaries.add(s)
+        if e and today < e + dt.timedelta(days=1) <= horizon:
+            boundaries.add(e + dt.timedelta(days=1))
+    if boundaries:
+        nb = min(boundaries)
+        inc_a, t1_a = _income_tier1_at(bills, nb)
+        env_after = round(inc_a - t1_a, 2)
+        if envelope > 0 and (envelope - env_after) >= 0.15 * envelope:
+            cliff = {"date": nb - dt.timedelta(days=1),
+                     "amount": round(envelope - env_after, 2), "envelope_after": env_after}
 
     # First weekly digest of a new month (day <= 7): recap the month just closed.
     recap = None
@@ -156,7 +201,7 @@ def compute_envelope(bills, instances, txns, today, classify=None):
         "days_total": days_total, "days_gone": days_gone, "days_left": days_total - days_gone,
         "pct_spent": (spent / envelope) if envelope > 0 else None,
         "pct_month_gone": days_gone / days_total,
-        "negative": remaining < 0, "cliff": next_cliff, "recap": recap,
+        "negative": remaining < 0, "cliff": cliff, "recap": recap,
     }
 
 
@@ -511,9 +556,9 @@ def _card(payload):
 
         if env.get("cliff"):
             c = env["cliff"]
-            cliff_html = (f'<div class="watch"><b>{c["name"]} ends {_fmt_date(c["date"])}.</b> '
-                          f'After that the envelope shrinks by about {_money(c["amount"])}/mo '
-                          f'&mdash; worth planning for now.</div>')
+            cliff_html = (f'<div class="watch"><b>Heads up: the plan changes {_fmt_date(c["date"])}.</b> '
+                          f'After that the monthly envelope drops about {_money(c["amount"])} '
+                          f'to {_money(c["envelope_after"])}/mo &mdash; worth planning for now.</div>')
         if env.get("recap"):
             r = env["recap"]
             side = (f'{_money(r["delta"])} under' if r["delta"] >= 0

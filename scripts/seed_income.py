@@ -58,13 +58,21 @@ INCOME = [
               "(next 2026-08-07). Amount varies ~$1,200-1,840; monthly here is the "
               "smoothed equivalent for the envelope, not a per-check figure."},
     {"bill_key": "income-oregon-ui-john",      "name": "Oregon UI (John)",
-     "monthly": 3908.67, "end": "2027-01-31", "freq": None, "anchor": None,
-     "notes": "PLACEHOLDER until the award letter confirms the weekly benefit "
-              "amount. NOT STARTED -- no deposits yet, so freq=None keeps it OUT of "
-              "the cash-runway forecast (still counts in the monthly envelope as a "
-              "plan). Set freq='weekly'/'biweekly' + anchor when the first UI payment "
-              "posts. End date is the benefit-year cliff -- envelope drops this line "
-              "automatically after it, digest warns 4 weeks prior."},
+     "monthly": 3908.67, "end": "2026-08-31", "freq": None, "anchor": None,
+     "notes": "CONFIRMED IN TALKS 2026-08-23: John will definitely be paid, but a "
+              "processing issue delayed it; the agency will BACK-PAY the missed weeks "
+              "(a lump, not modeled here as monthly). BRIDGE income only -- ENDS "
+              "2026-08-31, when John's Substrate owner draw begins (cannot draw business "
+              "income and collect UI). Amount still a PLACEHOLDER until the award letter "
+              "confirms the weekly benefit. freq=None keeps it out of the cash-runway; "
+              "counts in the monthly envelope through its end date."},
+    {"bill_key": "income-substrate-owner-draw", "name": "Substrate owner draw (John)",
+     "monthly": 6500.00, "start": "2026-09-01", "end": None, "freq": "weekly", "anchor": "2026-09-01",
+     "notes": "John's weekly owner draw from Substrate (his business with Jim): $1,500/week "
+              "starting 2026-09-01. Monthly equivalent $6,500 (1500 x 52 / 12) for the "
+              "envelope; weekly cadence feeds the cash-runway. Replaces the Oregon UI bridge "
+              "(UI ends 2026-08-31 as this begins). start=2026-09-01 keeps it OUT of the "
+              "envelope until it actually starts. Added 2026-08-23."},
 ]
 
 
@@ -86,6 +94,7 @@ def to_record(r, ts):
         f"{P}_monthlyequivalent": round(r["monthly"], 2),
         f"{P}_frequency": r.get("freq") or "",
         f"{P}_anchordate": r.get("anchor"),
+        f"{P}_startdate": r.get("start"),   # None => counts immediately; set to gate a future start
         f"{P}_paymentaccount": "unknown",
         f"{P}_matchmode": "none",
         f"{P}_enddate": r["end"],
