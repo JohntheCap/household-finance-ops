@@ -29,7 +29,7 @@ import budget as B  # reuse the exact classify() rules + BUDGETS
 ENV_URL = sys.argv[1].rstrip("/")
 API = f"{ENV_URL}/api/data/v9.2"
 P = "hf"
-TODAY = dt.date(2026, 8, 9)
+TODAY = dt.date.today()
 MONTH = f"{TODAY:%Y-%m}"
 
 
