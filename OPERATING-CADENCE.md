@@ -47,6 +47,11 @@ is a month-end or backlog item — park it, don't expand the session.
 
 ## Month-end close (1st–3rd of the new month)
 
+> **Step-by-step runbook: `SOP-MONTH-END-CLOSE.md`.** This section is the
+> shape of the ceremony; the SOP is the ordered procedure, the register/
+> don't-register rules, and the standing traps. Follow the SOP when running
+> an actual close.
+
 **1. Feed the card data (you, 5 min).** Wallet → Apple Card → Export
 Transactions (prior month) → then in the session:
 `py scripts/ingest_applecard.py <url> "<csv>"`. The budget review only
