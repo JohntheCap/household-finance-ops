@@ -11,37 +11,39 @@ KICKOFF-<date>.md current; the agent updates it as part of each session.
 
 ---
 
-## Weekly check-in (after the Sunday 14:00 UTC digest)
+## Weekly check-in (after the Sunday 14:00 UTC digest) — ~10 min
 
-The digest is the agent's report card. The weekly session is you grading it
-and feeding back what the data can't see.
+The digest is the agent's report card. The weekly is you grading it and
+feeding back what the data can't see. Depth belongs in the month-end.
 
-**1. Read the digest first (2 min, no Claude needed).** Three questions:
-- Does the envelope number feel right? (Any surprise = agenda item.)
-- Is anything in "Needs attention" actually wrong (false missed/drifted)?
-- Did Amanda get it, and did anything confuse her? (Non-negotiable #5:
-  her confusion is a defect, not user error.)
+**You, before opening a session (2 min):**
 
-**2. Open a session and report life changes (5 min).** The registry only
-knows what checking/card data shows plus what you say. Standing prompts:
-- "We cancelled / signed up for X" → agent writes an `apply_updates_<date>.py`
-  (idempotent, audited), runs it, then re-runs `/api/match`.
-- "X's price changed" → same pattern, envelope before/after printed.
-- "Amanda mentioned a payment/debt I haven't seen" → agent searches
-  `hf_transaction` for it FIRST (descriptor + amount pattern), reports
-  evidence, then registers it. Externally-paid items get
-  `paymentaccount=external, matchmode=none` — no fake match patterns.
+1. Read the digest. Envelope feel right? Anything in "Needs attention"
+   actually wrong? Did Amanda get it, and did anything confuse her?
+   (Her confusion is a defect, not user error — non-negotiable #5.)
 
-**3. Have the agent verify, not just record (3 min).** Standing checks:
-- False flags in "Needs attention" → fix tolerance/latency/pattern on the
-  offending bill (Google Fi precedent: latency 30, tolerance 50%).
-- Any digest section stale? → `/api/match` was skipped after a bill edit;
-  run it (`scripts/refresh_and_resend_digest.ps1` re-matches AND resends —
-  only resend if the sent digest was materially wrong).
-- Agent updates the current KICKOFF file's numbers before the session ends.
+**In the session (~8 min):**
 
-**Rule of thumb:** if a weekly session runs past ~15 minutes, the overflow
-is a month-end or backlog item — park it, don't expand the session.
+2. **Report life changes.** Cancelled or signed up for something, a price
+   changed, Amanda mentioned a payment or debt you haven't seen. The
+   registry knows only what the data shows plus what you say.
+3. **Name any false flags** from the digest so the agent can fix the bill's
+   tolerance/latency/pattern rather than let the noise stand.
+4. **Ask what changed and what's stale** — make the agent verify, not just
+   record.
+5. **Confirm the KICKOFF file was updated** before you close the session.
+
+**The agent's side, every time (no need to ask):**
+
+- Life changes → an idempotent, audited `apply_updates_<date>.py`, run it,
+  then re-run `/api/match`, and print the envelope before/after.
+- New payments Amanda mentions → search `hf_transaction` FIRST (descriptor +
+  amount), report evidence, then register. Externally-paid items get
+  `paymentaccount=external, matchmode=none` — never fake match patterns.
+- Update the current KICKOFF file's numbers before the session ends.
+
+**Rule of thumb:** past ~15 minutes, the overflow is a month-end or backlog
+item — park it, don't expand the session.
 
 ---
 
