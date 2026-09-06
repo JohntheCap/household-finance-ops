@@ -505,7 +505,57 @@ def run_sync(trigger: str) -> dict:
     else:
         run["bill_match"] = {"status": "skipped", "empty_reason": "sync_failed",
                              "source_env": SOURCE_ENV}
+    _send_ops_alert(dv, run)
     return run
+
+
+def _send_ops_alert(dv: Dataverse, run: dict) -> None:
+    """Same-day email to John when a TIMER run fails (sync or matching).
+
+    September 2026 improvement: the 9/4-9/6 ITEM_LOGIN_REQUIRED outage sat
+    unnoticed for two days because only the Sunday digest surfaces sync state.
+    Timer runs only -- manual runs are watched live. Gated on DIGEST_SEND like
+    the digest, so no email path exists unless Graph sending is approved.
+    Recipient is DIGEST_TO only, CC hardcoded empty: ops noise must never reach
+    Amanda even after her digest CC is restored (Amanda-first). Never raises
+    into the sync's control flow.
+    """
+    try:
+        if run["trigger"] != "timer":
+            return
+        if os.environ.get("DIGEST_SEND", "false").lower() != "true":
+            return
+        failed_items = [i for i in run["items"] if i.get("status") != "ok"]
+        match_failed = (run.get("bill_match") or {}).get("status") == "match_failed"
+        if run["status"] == "ok" and not match_failed:
+            return
+        to, _cc = _digest_recipients()
+        lines = [f"<li><b>{i.get('item')}</b>: {i.get('error_code', '?')}</li>"
+                 for i in failed_items]
+        if match_failed:
+            lines.append("<li><b>bill matching</b>: "
+                         f"{run['bill_match'].get('error_code', '?')}</li>")
+        hint = ""
+        if any(i.get("error_code") == "ITEM_LOGIN_REQUIRED" for i in failed_items):
+            hint = ("<p><b>Fix:</b> the bank forced a re-auth. Run the re-link flow "
+                    "(Plaid Link update mode via /api/relink_token -- see RUNBOOK); "
+                    "the Item and its token stay valid, no new Item is consumed.</p>")
+        html = (f"<p>Nightly run <b>{run['run_id']}</b> failed at {run['finished_at']} "
+                f"({run['source_env']}).</p><ul>{''.join(lines)}</ul>{hint}"
+                "<p>Until this is fixed, transactions stop flowing and the weekly "
+                "digest will be marked stale.</p>")
+        _graph_send(to, [], f"HF Ops ALERT: nightly sync FAILED ({run['run_id']})", html)
+        dv.audit("alert.sync_failed.sent", "SyncRun", run["run_id"], {
+            "run_id": run["run_id"], "to": to, "cc": [],
+            "errors": ([i.get("error_code") for i in failed_items]
+                       + (["match_failed"] if match_failed else []))})
+    except Exception:  # noqa: BLE001 -- the alert must never break the run it reports on
+        logging.exception("ops alert failed (sync run itself already recorded)")
+        try:
+            dv.audit("alert.sync_failed.send_failed", "SyncRun",
+                     run.get("run_id", "?"), {"run_id": run.get("run_id")})
+        except Exception:
+            logging.exception("could not audit alert failure")
 
 
 # ---------------------------------------------------------------- weekly digest
