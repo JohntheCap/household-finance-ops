@@ -630,6 +630,51 @@ def manual_sync(req: func.HttpRequest) -> func.HttpResponse:
                              status_code=200 if run["status"] == "ok" else 502)
 
 
+@app.route(route="relink_token", auth_level=func.AuthLevel.FUNCTION)
+def relink_token(req: func.HttpRequest) -> func.HttpResponse:
+    """Mint a Plaid Link token in UPDATE MODE for an existing Item — the
+    ITEM_LOGIN_REQUIRED recovery path (RUNBOOK troubleshooting table). Plaid
+    secrets and the access token never leave the app; the caller gets only the
+    short-lived link_token to feed Plaid Link in the browser. The Item and its
+    access token stay valid — no new Item is consumed.
+
+    ?label=  selects the Item (default usaa-checking).
+    ?redirect=  overrides the OAuth redirect_uri (default http://localhost:3000/,
+    the quickstart origin); pass redirect=none to omit it entirely.
+    """
+    dv = Dataverse()
+    label = req.params.get("label", "usaa-checking")
+    items = dv.get(f"{P}_plaiditems?$filter={P}_label eq '{label}' and {P}_active eq true")["value"]
+    if not items:
+        return func.HttpResponse(json.dumps({"error": f"no active item '{label}'"}),
+                                 status_code=404, mimetype="application/json")
+    item = items[0]
+    access_token = _secrets.get_secret(item[f"{P}_kvsecretname"]).value
+    body = {
+        "client_name": "Household Finance Ops",
+        "user": {"client_user_id": "john-hfops"},
+        "country_codes": ["US"],
+        "language": "en",
+        "access_token": access_token,
+    }
+    redirect = req.params.get("redirect", "http://localhost:3000/")
+    if redirect.lower() != "none":
+        body["redirect_uri"] = redirect
+    try:
+        resp = plaid_post("/link/token/create", body)
+    except PlaidError as e:
+        dv.audit("plaid.relink.token_failed", "PlaidItem", item[f"{P}_plaiditemid"],
+                 {"label": label, "error_code": e.code, "message": e.message})
+        return func.HttpResponse(json.dumps({"error_code": e.code, "message": e.message}),
+                                 status_code=502, mimetype="application/json")
+    dv.audit("plaid.relink.token_created", "PlaidItem", item[f"{P}_plaiditemid"],
+             {"label": label, "expiration": resp.get("expiration"),
+              "redirect_uri": body.get("redirect_uri")})
+    return func.HttpResponse(json.dumps({"link_token": resp["link_token"],
+                                         "expiration": resp.get("expiration"),
+                                         "label": label}), mimetype="application/json")
+
+
 @app.route(route="match", auth_level=func.AuthLevel.FUNCTION)
 def manual_match(req: func.HttpRequest) -> func.HttpResponse:
     """Re-run matching without a sync — for after an Apple Card CSV import."""
